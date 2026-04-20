@@ -1,0 +1,79 @@
+{
+  "meta": {
+    "generatedAt": "2026-04-20T00:00:00.000Z",
+    "scanDurationMs": 1234,
+    "sourceVersion": "polymarket-lp-reward-scanner/mock"
+  },
+  "availableTags": ["Crypto", "Politics", "Sports"],
+  "dashboard": {
+    "rows": [
+      {
+        "marketId": "mock-dashboard-1",
+        "question": "Will BTC trade above $100k by month end?",
+        "image": null,
+        "tags": ["Crypto"],
+        "eventStartTime": "2026-04-25T12:00:00.000Z",
+        "eventTiming": "upcoming",
+        "timeToStartHuman": "5d",
+        "rewardDailyRate": 150,
+        "rewardsMaxSpread": 4.5,
+        "rewardsMinSize": 1000,
+        "marketCompetitiveness": 12.4
+      }
+    ]
+  },
+  "opportunities": {
+    "singleSided": {
+      "rows": [
+        {
+          "marketId": "mock-opportunity-1",
+          "question": "Will BTC trade above $100k by month end?",
+          "image": null,
+          "tags": ["Crypto"],
+          "sideToTrade": "Yes",
+          "tokenId": "mock-token-1",
+          "status": "candidate_now",
+          "reason": "in_band",
+          "eventStartTime": "2026-04-25T12:00:00.000Z",
+          "eventTiming": "upcoming",
+          "timeToStartHuman": "5d",
+          "rewardDailyRate": 150,
+          "pricingZone": "neutral",
+          "marketCompetitiveness": 12.4,
+          "spreadRatio": 0.5,
+          "aprCeiling": 3400,
+          "rawApr": 122.5,
+          "effectiveApr": 115.1,
+          "suggestedPrice": 0.54,
+          "queueMultiple": 4.2
+        }
+      ]
+    },
+    "twoSided": {
+      "rows": [
+        {
+          "marketId": "mock-opportunity-1",
+          "question": "Will BTC trade above $100k by month end?",
+          "image": null,
+          "tags": ["Crypto"],
+          "sideToTrade": "Yes",
+          "tokenId": "mock-token-1",
+          "status": "candidate_now",
+          "reason": "in_band",
+          "eventStartTime": "2026-04-25T12:00:00.000Z",
+          "eventTiming": "upcoming",
+          "timeToStartHuman": "5d",
+          "rewardDailyRate": 150,
+          "pricingZone": "neutral",
+          "marketCompetitiveness": 12.4,
+          "spreadRatio": 0.5,
+          "aprCeiling": 3400,
+          "rawApr": 122.5,
+          "effectiveApr": 122.5,
+          "suggestedPrice": 0.54,
+          "queueMultiple": 4.2
+        }
+      ]
+    }
+  }
+}

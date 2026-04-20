@@ -1,0 +1,24 @@
+{
+  "name": "polymarket-lp-reward-scanner",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "dev:mock-snapshot": "SNAPSHOT_LOCAL_PATH=fixtures/mock-snapshot.json next dev",
+    "build": "next build",
+    "start": "next start",
+    "snapshot:generate": "cargo run --quiet --bin snapshot --",
+    "snapshot:publish": "node scripts/publish-snapshot.mjs"
+  },
+  "dependencies": {
+    "@vercel/blob": "2.0.0",
+    "next": "16.1.6",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.6.1",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "typescript": "5.9.3"
+  }
+}

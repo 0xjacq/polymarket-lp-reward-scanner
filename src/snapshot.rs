@@ -1,0 +1,576 @@
+use std::collections::{HashMap, HashSet};
+use std::time::Instant;
+
+use anyhow::Result;
+use chrono::{DateTime, Utc};
+use polymarket_client_sdk::types::{Decimal, B256};
+use serde::Serialize;
+
+use crate::client::{PolymarketClient, RewardDetailSnapshot};
+use crate::config;
+use crate::filters::{filter_snapshot_eligible, reference_start_time};
+use crate::models::{
+    DashboardRow, MarketSnapshot, Opportunity, OpportunityReason, OpportunityStatus, PricingZone,
+    RewardProgram, SortField,
+};
+use crate::scoring::{
+    analyze_markets, human_duration, market_competitiveness_p90, sort_opportunities,
+};
+
+#[derive(Debug, Clone)]
+pub struct SnapshotBuildConfig {
+    pub quote_size_usdc: Decimal,
+    pub min_queue_multiple: Decimal,
+    pub min_apr: Decimal,
+    pub tag: Option<String>,
+    pub sort: SortField,
+    pub limit: usize,
+    pub dashboard_limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    pub meta: SnapshotMeta,
+    pub available_tags: Vec<String>,
+    pub dashboard: DashboardSnapshot,
+    pub opportunities: SnapshotOpportunities,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotMeta {
+    pub generated_at: String,
+    pub scan_duration_ms: u64,
+    pub source_version: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardSnapshot {
+    pub rows: Vec<SnapshotDashboardRow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotOpportunities {
+    pub single_sided: SnapshotOpportunityDataset,
+    pub two_sided: SnapshotOpportunityDataset,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotOpportunityDataset {
+    pub rows: Vec<SnapshotOpportunityRow>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EventTiming {
+    Started,
+    Upcoming,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotDashboardRow {
+    pub market_id: String,
+    pub question: String,
+    pub image: Option<String>,
+    pub tags: Vec<String>,
+    pub event_start_time: Option<String>,
+    pub event_timing: EventTiming,
+    pub time_to_start_human: Option<String>,
+    pub reward_daily_rate: Decimal,
+    pub rewards_max_spread: Decimal,
+    pub rewards_min_size: Decimal,
+    pub market_competitiveness: Option<Decimal>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotOpportunityRow {
+    pub market_id: String,
+    pub question: String,
+    pub image: Option<String>,
+    pub tags: Vec<String>,
+    pub side_to_trade: String,
+    pub token_id: String,
+    pub status: OpportunityStatus,
+    pub reason: OpportunityReason,
+    pub event_start_time: Option<String>,
+    pub event_timing: EventTiming,
+    pub time_to_start_human: Option<String>,
+    pub reward_daily_rate: Decimal,
+    pub pricing_zone: Option<PricingZone>,
+    pub market_competitiveness: Option<Decimal>,
+    pub spread_ratio: Option<Decimal>,
+    pub apr_ceiling: Option<Decimal>,
+    pub raw_apr: Option<Decimal>,
+    pub effective_apr: Option<Decimal>,
+    pub suggested_price: Option<Decimal>,
+    pub queue_multiple: Option<Decimal>,
+}
+
+#[derive(Debug, Clone)]
+struct MarketUiMetadata {
+    image: Option<String>,
+    tags: Vec<String>,
+    reference_start_time: Option<DateTime<Utc>>,
+}
+
+pub async fn build_snapshot(
+    client: &PolymarketClient,
+    config: &SnapshotBuildConfig,
+) -> Result<Snapshot> {
+    let started_at = Instant::now();
+    let generated_started_at = Utc::now();
+    let source_version = format!(
+        "polymarket-lp-reward-scanner/{}",
+        env!("CARGO_PKG_VERSION")
+    );
+
+    let rewards = client.fetch_current_rewards_all().await?;
+    let unique_condition_ids: Vec<_> = rewards
+        .iter()
+        .map(|reward| reward.condition_id)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let markets = client
+        .fetch_markets_by_condition_ids(&unique_condition_ids)
+        .await?;
+
+    let mut dashboard_rewards = rewards.clone();
+    if let Some(tag) = config.tag.as_deref() {
+        dashboard_rewards.retain(|reward| {
+            markets
+                .get(&reward.condition_id)
+                .map(|market| {
+                    market.tags.iter().any(|market_tag| {
+                        market_tag
+                            .slug
+                            .as_deref()
+                            .map(|slug| slug.eq_ignore_ascii_case(tag))
+                            .unwrap_or(false)
+                            || market_tag
+                                .label
+                                .as_deref()
+                                .map(|label| label.eq_ignore_ascii_case(tag))
+                                .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false)
+        });
+    }
+
+    dashboard_rewards.sort_by(|left, right| {
+        right
+            .reward_daily_rate
+            .cmp(&left.reward_daily_rate)
+            .then_with(|| left.condition_id.cmp(&right.condition_id))
+    });
+    dashboard_rewards.truncate(config.dashboard_limit);
+
+    let dashboard_detail_ids: Vec<_> = dashboard_rewards
+        .iter()
+        .map(|reward| reward.condition_id)
+        .collect();
+    let reward_details = client.fetch_reward_details(&dashboard_detail_ids).await;
+
+    let mut eligible = filter_snapshot_eligible(
+        &rewards,
+        &markets,
+        config.tag.as_deref(),
+        generated_started_at,
+    );
+    eligible.sort_by(|left, right| {
+        right
+            .reward
+            .reward_daily_rate
+            .cmp(&left.reward.reward_daily_rate)
+            .then_with(|| left.event_start_time.cmp(&right.event_start_time))
+            .then_with(|| left.reward.condition_id.cmp(&right.reward.condition_id))
+    });
+
+    let book_shortlist_size = std::cmp::max(
+        config
+            .limit
+            .saturating_mul(config::BOOK_SHORTLIST_MULTIPLIER),
+        config::BOOK_SHORTLIST_MIN,
+    );
+    if eligible.len() > book_shortlist_size {
+        eligible.truncate(book_shortlist_size);
+    }
+
+    let token_ids: Vec<_> = eligible
+        .iter()
+        .flat_map(|market| market.market.tokens.iter().map(|token| token.token_id))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let books = client.fetch_order_books(&token_ids).await?;
+
+    let mut preliminary_single = analyze_markets(
+        &eligible,
+        &books,
+        config.quote_size_usdc,
+        config.min_queue_multiple,
+        false,
+        None,
+    );
+    sort_opportunities(&mut preliminary_single, config.sort);
+
+    let mut preliminary_two = analyze_markets(
+        &eligible,
+        &books,
+        config.quote_size_usdc,
+        config.min_queue_multiple,
+        true,
+        None,
+    );
+    sort_opportunities(&mut preliminary_two, config.sort);
+
+    let competitiveness_shortlist_size = std::cmp::max(
+        config
+            .limit
+            .saturating_mul(config::COMPETITIVENESS_SHORTLIST_MULTIPLIER),
+        config::COMPETITIVENESS_SHORTLIST_MIN,
+    );
+    let shortlisted_condition_ids: HashSet<String> = preliminary_single
+        .iter()
+        .take(competitiveness_shortlist_size)
+        .chain(preliminary_two.iter().take(competitiveness_shortlist_size))
+        .map(|opportunity| opportunity.market_id.clone())
+        .collect();
+
+    let mut eligible: Vec<_> = eligible
+        .into_iter()
+        .filter(|market| {
+            shortlisted_condition_ids.contains(&market.reward.condition_id.to_string())
+        })
+        .collect();
+
+    let competitiveness = client
+        .fetch_market_competitiveness(
+            &eligible
+                .iter()
+                .map(|market| market.reward.condition_id)
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>(),
+        )
+        .await;
+    for market in &mut eligible {
+        market.reward.market_competitiveness = competitiveness
+            .get(&market.reward.condition_id)
+            .cloned()
+            .flatten();
+    }
+    let competitiveness_p90 = market_competitiveness_p90(
+        &eligible
+            .iter()
+            .map(|market| market.reward.clone())
+            .collect::<Vec<_>>(),
+    );
+
+    let mut single_sided = analyze_markets(
+        &eligible,
+        &books,
+        config.quote_size_usdc,
+        config.min_queue_multiple,
+        false,
+        competitiveness_p90,
+    );
+    single_sided.retain(|opportunity| {
+        opportunity.status != OpportunityStatus::CandidateNow
+            || opportunity
+                .apr_effective
+                .map(|apr| apr >= config.min_apr)
+                .unwrap_or(false)
+    });
+    sort_opportunities(&mut single_sided, config.sort);
+    single_sided.truncate(config.limit);
+
+    let mut two_sided = analyze_markets(
+        &eligible,
+        &books,
+        config.quote_size_usdc,
+        config.min_queue_multiple,
+        true,
+        competitiveness_p90,
+    );
+    two_sided.retain(|opportunity| {
+        opportunity.status != OpportunityStatus::CandidateNow
+            || opportunity
+                .apr_effective
+                .map(|apr| apr >= config.min_apr)
+                .unwrap_or(false)
+    });
+    sort_opportunities(&mut two_sided, config.sort);
+    two_sided.truncate(config.limit);
+
+    let market_metadata = build_market_metadata_map(&markets);
+    let generated_at = Utc::now();
+    let dashboard_rows =
+        build_dashboard_rows(&dashboard_rewards, &reward_details, &markets, generated_at);
+    let single_rows = build_opportunity_rows(&single_sided, &market_metadata, generated_at);
+    let two_rows = build_opportunity_rows(&two_sided, &market_metadata, generated_at);
+
+    Ok(Snapshot {
+        meta: SnapshotMeta {
+            generated_at: generated_at.to_rfc3339(),
+            scan_duration_ms: started_at.elapsed().as_millis() as u64,
+            source_version,
+        },
+        available_tags: collect_available_tags(&markets),
+        dashboard: DashboardSnapshot {
+            rows: dashboard_rows,
+        },
+        opportunities: SnapshotOpportunities {
+            single_sided: SnapshotOpportunityDataset { rows: single_rows },
+            two_sided: SnapshotOpportunityDataset { rows: two_rows },
+        },
+    })
+}
+
+fn build_dashboard_rows(
+    rewards: &[RewardProgram],
+    reward_details: &HashMap<B256, RewardDetailSnapshot>,
+    markets: &HashMap<B256, MarketSnapshot>,
+    now: DateTime<Utc>,
+) -> Vec<SnapshotDashboardRow> {
+    rewards
+        .iter()
+        .map(|reward| {
+            let detail = reward_details.get(&reward.condition_id);
+            let market = markets.get(&reward.condition_id);
+            let display_time = market.and_then(reference_start_time);
+            let event_timing = classify_event_timing(display_time, now);
+
+            let row = DashboardRow {
+                market_id: reward.condition_id.to_string(),
+                question: detail
+                    .and_then(|detail| detail.question.clone())
+                    .unwrap_or_else(|| {
+                        market
+                            .map(|market| market.question.clone())
+                            .unwrap_or_else(|| reward.condition_id.to_string())
+                    }),
+                event_start_time: display_time.map(|value| value.to_rfc3339()),
+                reward_daily_rate: reward.reward_daily_rate,
+                rewards_max_spread: detail
+                    .and_then(|detail| detail.rewards_max_spread)
+                    .unwrap_or(reward.rewards_max_spread),
+                rewards_min_size: detail
+                    .and_then(|detail| detail.rewards_min_size)
+                    .unwrap_or(reward.rewards_min_size),
+                market_competitiveness: detail
+                    .and_then(|detail| detail.market_competitiveness)
+                    .or(reward.market_competitiveness),
+            };
+
+            SnapshotDashboardRow {
+                market_id: row.market_id,
+                question: row.question,
+                image: market.and_then(|market| market.image.clone()),
+                tags: market.map(flatten_tags).unwrap_or_default(),
+                event_start_time: row.event_start_time,
+                event_timing,
+                time_to_start_human: display_time
+                    .map(|value| human_duration((value - now).num_seconds())),
+                reward_daily_rate: row.reward_daily_rate,
+                rewards_max_spread: row.rewards_max_spread,
+                rewards_min_size: row.rewards_min_size,
+                market_competitiveness: row.market_competitiveness,
+            }
+        })
+        .collect()
+}
+
+fn build_opportunity_rows(
+    opportunities: &[Opportunity],
+    market_metadata: &HashMap<String, MarketUiMetadata>,
+    now: DateTime<Utc>,
+) -> Vec<SnapshotOpportunityRow> {
+    opportunities
+        .iter()
+        .map(|opportunity| {
+            let metadata = market_metadata.get(&opportunity.market_id);
+            let display_time = metadata.and_then(|metadata| metadata.reference_start_time);
+            let event_timing = classify_event_timing(display_time, now);
+
+            SnapshotOpportunityRow {
+                market_id: opportunity.market_id.clone(),
+                question: opportunity.question.clone(),
+                image: metadata.and_then(|metadata| metadata.image.clone()),
+                tags: metadata
+                    .map(|metadata| metadata.tags.clone())
+                    .unwrap_or_default(),
+                side_to_trade: opportunity.side_to_trade.clone(),
+                token_id: opportunity.token_id.clone(),
+                status: opportunity.status,
+                reason: opportunity.reason,
+                event_start_time: display_time.map(|value| value.to_rfc3339()),
+                event_timing,
+                time_to_start_human: display_time
+                    .map(|value| human_duration((value - now).num_seconds())),
+                reward_daily_rate: opportunity.reward_daily_rate,
+                pricing_zone: opportunity.pricing_zone,
+                market_competitiveness: opportunity.market_competitiveness,
+                spread_ratio: opportunity.spread_ratio,
+                apr_ceiling: opportunity.apr_ceiling,
+                raw_apr: opportunity.apr_estimated,
+                effective_apr: opportunity.apr_effective,
+                suggested_price: opportunity.suggested_price,
+                queue_multiple: opportunity.liquidity_info.queue_multiple,
+            }
+        })
+        .collect()
+}
+
+fn build_market_metadata_map(
+    markets: &HashMap<B256, MarketSnapshot>,
+) -> HashMap<String, MarketUiMetadata> {
+    markets
+        .iter()
+        .map(|(condition_id, market)| {
+            (
+                condition_id.to_string(),
+                MarketUiMetadata {
+                    image: market.image.clone(),
+                    tags: flatten_tags(market),
+                    reference_start_time: reference_start_time(market),
+                },
+            )
+        })
+        .collect()
+}
+
+fn flatten_tags(market: &MarketSnapshot) -> Vec<String> {
+    market
+        .tags
+        .iter()
+        .filter_map(|tag| {
+            tag.label
+                .as_ref()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    tag.slug
+                        .as_ref()
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty())
+                })
+        })
+        .collect()
+}
+
+fn collect_available_tags(markets: &HashMap<B256, MarketSnapshot>) -> Vec<String> {
+    let mut tags: Vec<_> = markets
+        .values()
+        .flat_map(flatten_tags)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    tags.sort();
+    tags
+}
+
+fn classify_event_timing(reference_time: Option<DateTime<Utc>>, now: DateTime<Utc>) -> EventTiming {
+    match reference_time {
+        Some(time) if time <= now => EventTiming::Started,
+        _ => EventTiming::Upcoming,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use chrono::{TimeZone, Utc};
+    use polymarket_client_sdk::types::{dec, B256, U256};
+
+    use super::{build_opportunity_rows, classify_event_timing, EventTiming, MarketUiMetadata};
+    use crate::models::{
+        LiquidityInfo, Opportunity, OpportunityReason, OpportunityStatus, PricingZone,
+    };
+
+    #[test]
+    fn classifies_started_and_upcoming_from_reference_time() {
+        let now = Utc.with_ymd_and_hms(2026, 4, 17, 12, 0, 0).unwrap();
+        assert_eq!(
+            classify_event_timing(
+                Some(Utc.with_ymd_and_hms(2026, 4, 17, 11, 0, 0).unwrap()),
+                now
+            ),
+            EventTiming::Started
+        );
+        assert_eq!(
+            classify_event_timing(
+                Some(Utc.with_ymd_and_hms(2026, 4, 17, 13, 0, 0).unwrap()),
+                now
+            ),
+            EventTiming::Upcoming
+        );
+    }
+
+    #[test]
+    fn opportunity_rows_use_market_reference_time_for_timing() {
+        let now = Utc.with_ymd_and_hms(2026, 4, 17, 12, 0, 0).unwrap();
+        let opportunity = Opportunity {
+            market_id: B256::ZERO.to_string(),
+            question: "Question".to_string(),
+            side_to_trade: "YES".to_string(),
+            token_id: U256::from(1u64).to_string(),
+            status: OpportunityStatus::CandidateNow,
+            reason: OpportunityReason::InBand,
+            event_start_time: Utc
+                .with_ymd_and_hms(2026, 4, 18, 12, 0, 0)
+                .unwrap()
+                .to_rfc3339(),
+            time_to_start_seconds: 86_400,
+            time_to_start_human: "1d 0h".to_string(),
+            reward_daily_rate: dec!(5),
+            pricing_zone: Some(PricingZone::Neutral),
+            market_competitiveness: Some(dec!(1)),
+            spread_ratio: Some(dec!(0.5)),
+            apr_ceiling: Some(dec!(100)),
+            apr_estimated: Some(dec!(25)),
+            apr_effective: Some(dec!(8.33)),
+            suggested_price: Some(dec!(0.48)),
+            liquidity_info: LiquidityInfo {
+                best_bid: Some(dec!(0.47)),
+                best_ask: Some(dec!(0.49)),
+                adjusted_midpoint: Some(dec!(0.48)),
+                tick_size: dec!(0.01),
+                reward_floor_price: Some(dec!(0.45)),
+                suggested_price: Some(dec!(0.48)),
+                queue_ahead_shares: Some(dec!(100)),
+                queue_ahead_notional: Some(dec!(48)),
+                queue_multiple: Some(dec!(2.5)),
+                qualifying_depth_shares: Some(dec!(500)),
+                distance_to_ask: Some(dec!(0.01)),
+                current_spread: Some(dec!(0.02)),
+            },
+        };
+
+        let rows = build_opportunity_rows(
+            &[opportunity],
+            &HashMap::from([(
+                B256::ZERO.to_string(),
+                MarketUiMetadata {
+                    image: Some("https://example.com/image.png".to_string()),
+                    tags: vec!["Energy".to_string()],
+                    reference_start_time: Some(
+                        Utc.with_ymd_and_hms(2026, 4, 17, 11, 30, 0).unwrap(),
+                    ),
+                },
+            )]),
+            now,
+        );
+
+        assert_eq!(rows[0].event_timing, EventTiming::Started);
+        assert_eq!(rows[0].time_to_start_human.as_deref(), Some("started"));
+    }
+}
