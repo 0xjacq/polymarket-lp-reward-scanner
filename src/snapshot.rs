@@ -76,6 +76,7 @@ pub enum EventTiming {
 pub struct SnapshotDashboardRow {
     pub market_id: String,
     pub question: String,
+    pub market_url: Option<String>,
     pub image: Option<String>,
     pub tags: Vec<String>,
     pub event_start_time: Option<String>,
@@ -92,6 +93,7 @@ pub struct SnapshotDashboardRow {
 pub struct SnapshotOpportunityRow {
     pub market_id: String,
     pub question: String,
+    pub market_url: Option<String>,
     pub image: Option<String>,
     pub tags: Vec<String>,
     pub side_to_trade: String,
@@ -114,9 +116,16 @@ pub struct SnapshotOpportunityRow {
 
 #[derive(Debug, Clone)]
 struct MarketUiMetadata {
+    market_url: Option<String>,
     image: Option<String>,
     tags: Vec<String>,
     reference_start_time: Option<DateTime<Utc>>,
+}
+
+fn build_polymarket_market_url(slug: Option<&str>) -> Option<String> {
+    slug.map(str::trim)
+        .filter(|slug| !slug.is_empty())
+        .map(|slug| format!("https://polymarket.com/event/{slug}"))
 }
 
 pub async fn build_snapshot(
@@ -373,6 +382,11 @@ fn build_dashboard_rows(
             SnapshotDashboardRow {
                 market_id: row.market_id,
                 question: row.question,
+                market_url: build_polymarket_market_url(
+                    detail
+                        .and_then(|detail| detail.market_slug.as_deref())
+                        .or_else(|| market.and_then(|market| market.slug.as_deref())),
+                ),
                 image: market.and_then(|market| market.image.clone()),
                 tags: market.map(flatten_tags).unwrap_or_default(),
                 event_start_time: row.event_start_time,
@@ -403,6 +417,7 @@ fn build_opportunity_rows(
             SnapshotOpportunityRow {
                 market_id: opportunity.market_id.clone(),
                 question: opportunity.question.clone(),
+                market_url: metadata.and_then(|metadata| metadata.market_url.clone()),
                 image: metadata.and_then(|metadata| metadata.image.clone()),
                 tags: metadata
                     .map(|metadata| metadata.tags.clone())
@@ -438,6 +453,7 @@ fn build_market_metadata_map(
             (
                 condition_id.to_string(),
                 MarketUiMetadata {
+                    market_url: build_polymarket_market_url(market.slug.as_deref()),
                     image: market.image.clone(),
                     tags: flatten_tags(market),
                     reference_start_time: reference_start_time(market),
@@ -560,6 +576,9 @@ mod tests {
             &HashMap::from([(
                 B256::ZERO.to_string(),
                 MarketUiMetadata {
+                    market_url: Some(
+                        "https://polymarket.com/event/question-market".to_string(),
+                    ),
                     image: Some("https://example.com/image.png".to_string()),
                     tags: vec!["Energy".to_string()],
                     reference_start_time: Some(

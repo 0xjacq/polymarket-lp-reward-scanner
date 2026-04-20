@@ -318,6 +318,17 @@ button {
   line-height: 1.3;
 }
 
+.market-title-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.market-title-link:hover,
+.market-title-link:focus-visible {
+  color: #baf0d5;
+  text-decoration: underline;
+}
+
 .market-subhead {
   margin: 0;
   color: var(--muted);

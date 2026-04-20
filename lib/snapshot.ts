@@ -26,6 +26,7 @@ export type SnapshotMeta = {
 export type DashboardRow = {
   marketId: string;
   question: string;
+  marketUrl: string | null;
   image: string | null;
   tags: string[];
   eventStartTime: string | null;
@@ -40,6 +41,7 @@ export type DashboardRow = {
 export type OpportunityRow = {
   marketId: string;
   question: string;
+  marketUrl: string | null;
   image: string | null;
   tags: string[];
   sideToTrade: string;
@@ -139,6 +141,7 @@ function normalizeDashboardRow(value: unknown): DashboardRow {
   return {
     marketId: toStringValue(input.marketId) ?? "",
     question: toStringValue(input.question) ?? "Unknown market",
+    marketUrl: toStringValue(input.marketUrl),
     image: toStringValue(input.image),
     tags: toStringArray(input.tags),
     eventStartTime: toStringValue(input.eventStartTime),
@@ -156,6 +159,7 @@ function normalizeOpportunityRow(value: unknown): OpportunityRow {
   return {
     marketId: toStringValue(input.marketId) ?? "",
     question: toStringValue(input.question) ?? "Unknown market",
+    marketUrl: toStringValue(input.marketUrl),
     image: toStringValue(input.image),
     tags: toStringArray(input.tags),
     sideToTrade: toStringValue(input.sideToTrade) ?? "-",

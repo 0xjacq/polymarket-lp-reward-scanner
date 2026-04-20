@@ -682,6 +682,7 @@ mod tests {
             market: MarketSnapshot {
                 condition_id: B256::ZERO,
                 question: "Question".to_string(),
+                slug: Some("question-market".to_string()),
                 image: None,
                 tags: Vec::new(),
                 tokens: vec![

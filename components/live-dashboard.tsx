@@ -194,7 +194,15 @@ function ScannerRowCard({ row, displayedApr }: { row: OpportunityRow; displayedA
       <div className="market-main">
         <div className="market-heading">
           <div className="heading-copy">
-            <h2>{row.question}</h2>
+            <h2>
+              {row.marketUrl ? (
+                <a className="market-title-link" href={row.marketUrl} rel="noreferrer" target="_blank">
+                  {row.question}
+                </a>
+              ) : (
+                row.question
+              )}
+            </h2>
             <p className="market-subhead">
               {row.sideToTrade} · {humanize(row.status)} · {humanize(row.reason)}
             </p>
@@ -268,7 +276,15 @@ function DashboardRowCard({ row }: { row: DashboardResponse["rows"][number] }) {
       <div className="market-main">
         <div className="market-heading">
           <div className="heading-copy">
-            <h2>{row.question}</h2>
+            <h2>
+              {row.marketUrl ? (
+                <a className="market-title-link" href={row.marketUrl} rel="noreferrer" target="_blank">
+                  {row.question}
+                </a>
+              ) : (
+                row.question
+              )}
+            </h2>
             <p className="market-subhead">{humanize(row.eventTiming)} market</p>
           </div>
 

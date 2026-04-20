@@ -587,6 +587,7 @@ fn normalize_market(market: Market) -> Option<MarketSnapshot> {
         question: market
             .question
             .unwrap_or_else(|| format!("market-{condition_id}")),
+        slug: market.slug,
         image: market.image,
         tags,
         tokens,
