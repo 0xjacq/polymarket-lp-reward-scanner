@@ -3,19 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type {
-  DashboardResponse,
   EventTiming,
   OpportunityRow,
   ScannerResponse
 } from "@/lib/snapshot";
 
 type Props = {
-  initialDashboard: DashboardResponse | null;
   initialScanner: ScannerResponse | null;
   initialError?: string | null;
 };
 
-type ViewMode = "scanner" | "dashboard";
 type TimingFilter = EventTiming | "all";
 type ScannerSort =
   | "effectiveApr"
@@ -26,6 +23,7 @@ type ScannerSort =
   | "spreadRatio";
 
 const REFRESH_MS = 30_000;
+const COUNTDOWN_TICK_MS = 30_000;
 
 function formatNumber(value: number | null, fractionDigits = 0) {
   if (value === null) {
@@ -94,6 +92,19 @@ function formatDurationFromMs(value: number | null) {
   return `${hours}h ${remainingMinutes}m`;
 }
 
+function formatLiveTimeToStart(eventStartTime: string | null, fallback: string | null, nowMs: number) {
+  if (!eventStartTime) {
+    return fallback ?? "-";
+  }
+
+  const eventMs = new Date(eventStartTime).getTime();
+  if (Number.isNaN(eventMs)) {
+    return fallback ?? "-";
+  }
+
+  return formatDurationFromMs(eventMs - nowMs);
+}
+
 function humanize(value: string) {
   return value
     .split("_")
@@ -125,39 +136,6 @@ function matchesSearch(query: string, values: string[]) {
   return values.some((value) => value.toLowerCase().includes(query));
 }
 
-function Stat({
-  label,
-  value,
-  tone
-}: {
-  label: string;
-  value: string;
-  tone: "green" | "gold" | "coral" | "slate";
-}) {
-  return (
-    <div className={`stat stat-${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function TabButton({
-  active,
-  label,
-  onClick
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button className={active ? "tab-button active" : "tab-button"} onClick={onClick} type="button">
-      {label}
-    </button>
-  );
-}
-
 function FilterToggle({
   label,
   value,
@@ -180,7 +158,15 @@ function FilterToggle({
   );
 }
 
-function ScannerRowCard({ row, displayedApr }: { row: OpportunityRow; displayedApr: number | null }) {
+function ScannerRowCard({
+  row,
+  displayedApr,
+  nowMs
+}: {
+  row: OpportunityRow;
+  displayedApr: number | null;
+  nowMs: number;
+}) {
   return (
     <article className="market-row">
       <div className="market-visual">
@@ -246,7 +232,7 @@ function ScannerRowCard({ row, displayedApr }: { row: OpportunityRow; displayedA
           </div>
           <div>
             <span>Time to start</span>
-            <strong>{row.timeToStartHuman ?? "-"}</strong>
+            <strong>{formatLiveTimeToStart(row.eventStartTime, row.timeToStartHuman, nowMs)}</strong>
           </div>
           <div>
             <span>Timing</span>
@@ -262,80 +248,14 @@ function ScannerRowCard({ row, displayedApr }: { row: OpportunityRow; displayedA
   );
 }
 
-function DashboardRowCard({ row }: { row: DashboardResponse["rows"][number] }) {
-  return (
-    <article className="market-row">
-      <div className="market-visual">
-        {row.image ? (
-          <img src={row.image} alt="" loading="lazy" />
-        ) : (
-          <div className="image-fallback">{row.question.slice(0, 1).toUpperCase()}</div>
-        )}
-      </div>
-
-      <div className="market-main">
-        <div className="market-heading">
-          <div className="heading-copy">
-            <h2>
-              {row.marketUrl ? (
-                <a className="market-title-link" href={row.marketUrl} rel="noreferrer" target="_blank">
-                  {row.question}
-                </a>
-              ) : (
-                row.question
-              )}
-            </h2>
-            <p className="market-subhead">{humanize(row.eventTiming)} market</p>
-          </div>
-
-          <div className="tag-list">
-            {row.tags.slice(0, 4).map((tag) => (
-              <span key={`${row.marketId}-${tag}`}>{tag}</span>
-            ))}
-          </div>
-        </div>
-
-        <div className="market-metrics">
-          <div>
-            <span>Reward / day</span>
-            <strong>{formatMoney(row.rewardDailyRate)}</strong>
-          </div>
-          <div>
-            <span>Max spread</span>
-            <strong>{formatNumber(row.rewardsMaxSpread, 2)}c</strong>
-          </div>
-          <div>
-            <span>Min shares</span>
-            <strong>{formatNumber(row.rewardsMinSize, 0)}</strong>
-          </div>
-          <div>
-            <span>Competitiveness</span>
-            <strong>{formatNumber(row.marketCompetitiveness, 2)}</strong>
-          </div>
-          <div>
-            <span>Event time</span>
-            <strong>{formatTimestamp(row.eventStartTime)}</strong>
-          </div>
-          <div>
-            <span>Time to start</span>
-            <strong>{row.timeToStartHuman ?? "-"}</strong>
-          </div>
-        </div>
-      </div>
-    </article>
-  );
-}
-
 export function LiveDashboard({
-  initialDashboard,
   initialScanner,
   initialError = null
 }: Props) {
-  const [dashboard, setDashboard] = useState<DashboardResponse | null>(initialDashboard);
   const [scanner, setScanner] = useState<ScannerResponse | null>(initialScanner);
   const [error, setError] = useState<string | null>(initialError);
-  const [loading, setLoading] = useState(initialDashboard === null && initialScanner === null);
-  const [activeView, setActiveView] = useState<ViewMode>("scanner");
+  const [loading, setLoading] = useState(initialScanner === null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const [scannerSearch, setScannerSearch] = useState("");
   const [scannerTiming, setScannerTiming] = useState<TimingFilter>("upcoming");
@@ -344,11 +264,6 @@ export function LiveDashboard({
   const [scannerRows, setScannerRows] = useState(40);
   const [twoSided, setTwoSided] = useState(false);
   const [scannerSort, setScannerSort] = useState<ScannerSort>("effectiveApr");
-
-  const [dashboardSearch, setDashboardSearch] = useState("");
-  const [dashboardTiming, setDashboardTiming] = useState<TimingFilter>("upcoming");
-  const [dashboardTag, setDashboardTag] = useState("");
-  const [dashboardRows, setDashboardRows] = useState(40);
 
   useEffect(() => {
     setScannerSort(twoSided ? "rawApr" : "effectiveApr");
@@ -359,42 +274,24 @@ export function LiveDashboard({
 
     async function loadData() {
       try {
-        const [dashboardResult, scannerResult] = await Promise.allSettled([
-          fetch("/api/dashboard", { cache: "no-store" }).then(async (response) => {
-            const payload = (await response.json()) as DashboardResponse & { error?: string };
-            if (!response.ok) {
-              throw new Error(payload.error ?? "Dashboard request failed");
-            }
-            return payload;
-          }),
-          fetch("/api/scanner", { cache: "no-store" }).then(async (response) => {
-            const payload = (await response.json()) as ScannerResponse & { error?: string };
-            if (!response.ok) {
-              throw new Error(payload.error ?? "Scanner request failed");
-            }
-            return payload;
-          })
-        ]);
+        const scannerResult = await fetch("/api/scanner", { cache: "no-store" }).then(async (response) => {
+          const payload = (await response.json()) as ScannerResponse & { error?: string };
+          if (!response.ok) {
+            throw new Error(payload.error ?? "Scanner request failed");
+          }
+          return payload;
+        });
 
         if (cancelled) {
           return;
         }
 
-        const messages: string[] = [];
-
-        if (dashboardResult.status === "fulfilled") {
-          setDashboard(dashboardResult.value);
-        } else {
-          messages.push(dashboardResult.reason instanceof Error ? dashboardResult.reason.message : "Dashboard refresh failed");
+        setScanner(scannerResult);
+        setError(null);
+      } catch (refreshError) {
+        if (!cancelled) {
+          setError(refreshError instanceof Error ? refreshError.message : "Scanner refresh failed");
         }
-
-        if (scannerResult.status === "fulfilled") {
-          setScanner(scannerResult.value);
-        } else {
-          messages.push(scannerResult.reason instanceof Error ? scannerResult.reason.message : "Scanner refresh failed");
-        }
-
-        setError(messages.length > 0 ? [...new Set(messages)].join(" · ") : null);
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -411,15 +308,24 @@ export function LiveDashboard({
     };
   }, []);
 
-  const meta = scanner?.meta ?? dashboard?.meta ?? null;
-  const availableTags = scanner?.availableTags ?? dashboard?.availableTags ?? [];
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, COUNTDOWN_TICK_MS);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  const meta = scanner?.meta ?? null;
+  const availableTags = scanner?.availableTags ?? [];
   const activeScannerRows = twoSided ? scanner?.twoSided.rows ?? [] : scanner?.singleSided.rows ?? [];
   const isStale = meta?.snapshotHealth === "stale";
   const staleMessage = meta?.warning ?? null;
   const hasAnyData =
     (scanner?.singleSided.rows.length ?? 0) > 0 ||
-    (scanner?.twoSided.rows.length ?? 0) > 0 ||
-    (dashboard?.rows.length ?? 0) > 0;
+    (scanner?.twoSided.rows.length ?? 0) > 0;
 
   const filteredScannerRows = useMemo(() => {
     const query = scannerSearch.trim().toLowerCase();
@@ -488,29 +394,6 @@ export function LiveDashboard({
     return rows.slice(0, scannerRows);
   }, [activeScannerRows, minApr, scannerRows, scannerSearch, scannerSort, scannerTag, scannerTiming, twoSided]);
 
-  const filteredDashboardRows = useMemo(() => {
-    const query = dashboardSearch.trim().toLowerCase();
-    const rows = (dashboard?.rows ?? []).filter((row) => {
-      if (!matchesTiming(row.eventTiming, dashboardTiming)) {
-        return false;
-      }
-      if (dashboardTag && !row.tags.includes(dashboardTag)) {
-        return false;
-      }
-      return matchesSearch(query, [row.question.toLowerCase(), ...row.tags.map((tag) => tag.toLowerCase())]);
-    });
-
-    rows.sort((left, right) => {
-      return right.rewardDailyRate - left.rewardDailyRate;
-    });
-
-    return rows.slice(0, dashboardRows);
-  }, [dashboard?.rows, dashboardRows, dashboardSearch, dashboardTag, dashboardTiming]);
-
-  const candidateCount = useMemo(() => {
-    return activeScannerRows.filter((row) => row.status === "candidate_now").length;
-  }, [activeScannerRows]);
-
   return (
     <main className="app-shell">
       <section className="app-toolbar">
@@ -518,170 +401,91 @@ export function LiveDashboard({
           <p className="eyebrow">Polymarket reward snapshot</p>
           <h1>Opportunities</h1>
           <p className="subtle">
-            Browser refreshes every 30 seconds. Data is published every five minutes.
+            Browser refreshes every 30 seconds. Time to start updates live from event time.
           </p>
         </div>
-
-        <div className="toolbar-side">
-          <div className={isStale ? "freshness-banner stale" : "freshness-banner"}>
-            <span>Latest snapshot</span>
-            <strong>{meta ? formatDurationFromMs(meta.snapshotAgeMs) : "-"}</strong>
-            <small>{meta ? formatTimestamp(meta.generatedAt) : "No snapshot loaded"}</small>
-            <small>
-              {meta
-                ? `Source: ${humanize(meta.snapshotSource)} · stale after ${formatDurationFromMs(
-                    meta.staleAfterMs
-                  )}`
-                : "No snapshot source"}
-            </small>
-          </div>
-
-          <div className="tab-row" role="tablist" aria-label="Views">
-            <TabButton active={activeView === "scanner"} label="Opportunities" onClick={() => setActiveView("scanner")} />
-            <TabButton active={activeView === "dashboard"} label="Dashboard" onClick={() => setActiveView("dashboard")} />
-          </div>
-        </div>
-      </section>
-
-      <section className="summary-band">
-        <Stat
-          label="Snapshot age"
-          value={meta ? formatDurationFromMs(meta.snapshotAgeMs) : "-"}
-          tone={isStale ? "coral" : "green"}
-        />
-        <Stat label="Scan duration" value={meta ? `${formatNumber(meta.scanDurationMs, 0)} ms` : "-"} tone="gold" />
-        <Stat
-          label={twoSided ? "Two-sided rows" : "Single-sided rows"}
-          value={formatNumber(activeScannerRows.length, 0)}
-          tone="coral"
-        />
-        <Stat label="Candidate now" value={formatNumber(candidateCount, 0)} tone="slate" />
       </section>
 
       {staleMessage ? (
         <p className={isStale ? "warning-banner" : "info-banner"}>
-          {staleMessage}
+          {meta
+            ? `Snapshot published ${formatTimestamp(meta.generatedAt)}. ${staleMessage}`
+            : staleMessage}
         </p>
       ) : null}
 
-      {activeView === "scanner" ? (
-        <section className="filters-band">
-          <div className="filter-grid">
-            <label className="control control-wide">
-              <span>Search</span>
-              <input
-                value={scannerSearch}
-                onChange={(event) => setScannerSearch(event.target.value)}
-                placeholder="Question, side, status, reason, tag"
-              />
-            </label>
+      <section className="filters-band">
+        <div className="filter-grid">
+          <label className="control control-wide">
+            <span>Search</span>
+            <input
+              value={scannerSearch}
+              onChange={(event) => setScannerSearch(event.target.value)}
+              placeholder="Question, side, status, reason, tag"
+            />
+          </label>
 
-            <label className="control">
-              <span>Tag</span>
-              <select value={scannerTag} onChange={(event) => setScannerTag(event.target.value)}>
-                <option value="">All tags</option>
-                {availableTags.map((tag) => (
-                  <option key={tag} value={tag}>
-                    {tag}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="control">
-              <span>Min APR</span>
-              <input
-                inputMode="decimal"
-                value={minApr}
-                onChange={(event) => setMinApr(event.target.value)}
-                placeholder="0"
-              />
-            </label>
-
-            <label className="control">
-              <span>Sort</span>
-              <select value={scannerSort} onChange={(event) => setScannerSort(event.target.value as ScannerSort)}>
-                <option value={twoSided ? "rawApr" : "effectiveApr"}>
-                  {twoSided ? "Raw APR" : "Effective APR"}
+          <label className="control">
+            <span>Tag</span>
+            <select value={scannerTag} onChange={(event) => setScannerTag(event.target.value)}>
+              <option value="">All tags</option>
+              {availableTags.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag}
                 </option>
-                <option value="rewardDailyRate">Reward / day</option>
-                <option value="soonest">Soonest</option>
-                <option value="queueMultiple">Queue x</option>
-                <option value="spreadRatio">Tightest spread</option>
-              </select>
-            </label>
+              ))}
+            </select>
+          </label>
 
-            <label className="control control-select">
-              <span>Rows</span>
-              <select value={scannerRows} onChange={(event) => setScannerRows(Number(event.target.value))}>
-                <option value={20}>20</option>
-                <option value={40}>40</option>
-                <option value={80}>80</option>
-                <option value={120}>120</option>
-              </select>
-            </label>
+          <label className="control">
+            <span>Min APR</span>
+            <input
+              inputMode="decimal"
+              value={minApr}
+              onChange={(event) => setMinApr(event.target.value)}
+              placeholder="0"
+            />
+          </label>
+
+          <label className="control">
+            <span>Sort</span>
+            <select value={scannerSort} onChange={(event) => setScannerSort(event.target.value as ScannerSort)}>
+              <option value={twoSided ? "rawApr" : "effectiveApr"}>
+                {twoSided ? "Raw APR" : "Effective APR"}
+              </option>
+              <option value="rewardDailyRate">Reward / day</option>
+              <option value="soonest">Soonest</option>
+              <option value="queueMultiple">Queue x</option>
+              <option value="spreadRatio">Tightest spread</option>
+            </select>
+          </label>
+
+          <label className="control control-select">
+            <span>Rows</span>
+            <select value={scannerRows} onChange={(event) => setScannerRows(Number(event.target.value))}>
+              <option value={20}>20</option>
+              <option value={40}>40</option>
+              <option value={80}>80</option>
+              <option value={120}>120</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="toggle-row">
+          <div className="toggle-group">
+            <span>Timing</span>
+            <FilterToggle label="Upcoming" value="upcoming" active={scannerTiming === "upcoming"} onClick={(value) => setScannerTiming(value as TimingFilter)} />
+            <FilterToggle label="Started" value="started" active={scannerTiming === "started"} onClick={(value) => setScannerTiming(value as TimingFilter)} />
+            <FilterToggle label="All" value="all" active={scannerTiming === "all"} onClick={(value) => setScannerTiming(value as TimingFilter)} />
           </div>
 
-          <div className="toggle-row">
-            <div className="toggle-group">
-              <span>Timing</span>
-              <FilterToggle label="Upcoming" value="upcoming" active={scannerTiming === "upcoming"} onClick={(value) => setScannerTiming(value as TimingFilter)} />
-              <FilterToggle label="Started" value="started" active={scannerTiming === "started"} onClick={(value) => setScannerTiming(value as TimingFilter)} />
-              <FilterToggle label="All" value="all" active={scannerTiming === "all"} onClick={(value) => setScannerTiming(value as TimingFilter)} />
-            </div>
-
-            <div className="toggle-group">
-              <span>Mode</span>
-              <FilterToggle label="Single-sided" value="single" active={!twoSided} onClick={() => setTwoSided(false)} />
-              <FilterToggle label="Two-sided" value="two" active={twoSided} onClick={() => setTwoSided(true)} />
-            </div>
+          <div className="toggle-group">
+            <span>Mode</span>
+            <FilterToggle label="Single-sided" value="single" active={!twoSided} onClick={() => setTwoSided(false)} />
+            <FilterToggle label="Two-sided" value="two" active={twoSided} onClick={() => setTwoSided(true)} />
           </div>
-        </section>
-      ) : (
-        <section className="filters-band">
-          <div className="filter-grid">
-            <label className="control control-wide">
-              <span>Search</span>
-              <input
-                value={dashboardSearch}
-                onChange={(event) => setDashboardSearch(event.target.value)}
-                placeholder="Question or tag"
-              />
-            </label>
-
-            <label className="control">
-              <span>Tag</span>
-              <select value={dashboardTag} onChange={(event) => setDashboardTag(event.target.value)}>
-                <option value="">All tags</option>
-                {availableTags.map((tag) => (
-                  <option key={tag} value={tag}>
-                    {tag}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="control control-select">
-              <span>Rows</span>
-              <select value={dashboardRows} onChange={(event) => setDashboardRows(Number(event.target.value))}>
-                <option value={20}>20</option>
-                <option value={40}>40</option>
-                <option value={80}>80</option>
-                <option value={120}>120</option>
-              </select>
-            </label>
-          </div>
-
-          <div className="toggle-row">
-            <div className="toggle-group">
-              <span>Timing</span>
-              <FilterToggle label="Upcoming" value="upcoming" active={dashboardTiming === "upcoming"} onClick={(value) => setDashboardTiming(value as TimingFilter)} />
-              <FilterToggle label="Started" value="started" active={dashboardTiming === "started"} onClick={(value) => setDashboardTiming(value as TimingFilter)} />
-              <FilterToggle label="All" value="all" active={dashboardTiming === "all"} onClick={(value) => setDashboardTiming(value as TimingFilter)} />
-            </div>
-          </div>
-        </section>
-      )}
+        </div>
+      </section>
 
       {error ? (
         <p className="error-banner">
@@ -689,29 +493,18 @@ export function LiveDashboard({
         </p>
       ) : null}
 
-      {activeView === "scanner" && scanner && dashboard ? (
-        <p className="info-banner">
-          Scanner rows come from the selected snapshot dataset ({twoSided ? "two-sided" : "single-sided"}). Dashboard rows come from the reward dashboard dataset.
-        </p>
-      ) : null}
-
       <section className="market-list" aria-live="polite">
-        {activeView === "scanner"
-          ? filteredScannerRows.map((row) => (
-              <ScannerRowCard
-                key={`${row.marketId}-${row.tokenId}`}
-                row={row}
-                displayedApr={twoSided ? row.rawApr : row.effectiveApr}
-              />
-            ))
-          : filteredDashboardRows.map((row) => <DashboardRowCard key={row.marketId} row={row} />)}
+        {filteredScannerRows.map((row) => (
+            <ScannerRowCard
+              key={`${row.marketId}-${row.tokenId}`}
+              row={row}
+              displayedApr={twoSided ? row.rawApr : row.effectiveApr}
+              nowMs={nowMs}
+            />
+        ))}
 
-        {!loading && !error && activeView === "scanner" && filteredScannerRows.length === 0 ? (
+        {!loading && !error && filteredScannerRows.length === 0 ? (
           <p className="empty-state">No scanner rows match the current filters.</p>
-        ) : null}
-
-        {!loading && !error && activeView === "dashboard" && filteredDashboardRows.length === 0 ? (
-          <p className="empty-state">No dashboard rows match the current filters.</p>
         ) : null}
       </section>
     </main>

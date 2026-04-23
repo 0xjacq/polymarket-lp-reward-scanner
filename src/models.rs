@@ -37,6 +37,7 @@ pub struct MarketSnapshot {
     pub condition_id: B256,
     pub question: String,
     pub slug: Option<String>,
+    pub event_slug: Option<String>,
     pub image: Option<String>,
     pub tags: Vec<MarketTag>,
     pub tokens: Vec<OutcomeToken>,

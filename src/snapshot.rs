@@ -122,8 +122,10 @@ struct MarketUiMetadata {
     reference_start_time: Option<DateTime<Utc>>,
 }
 
-fn build_polymarket_market_url(slug: Option<&str>) -> Option<String> {
-    slug.map(str::trim)
+fn build_polymarket_market_url(event_slug: Option<&str>, market_slug: Option<&str>) -> Option<String> {
+    event_slug
+        .or(market_slug)
+        .map(str::trim)
         .filter(|slug| !slug.is_empty())
         .map(|slug| format!("https://polymarket.com/event/{slug}"))
 }
@@ -383,6 +385,7 @@ fn build_dashboard_rows(
                 market_id: row.market_id,
                 question: row.question,
                 market_url: build_polymarket_market_url(
+                    market.and_then(|market| market.event_slug.as_deref()),
                     detail
                         .and_then(|detail| detail.market_slug.as_deref())
                         .or_else(|| market.and_then(|market| market.slug.as_deref())),
@@ -453,7 +456,10 @@ fn build_market_metadata_map(
             (
                 condition_id.to_string(),
                 MarketUiMetadata {
-                    market_url: build_polymarket_market_url(market.slug.as_deref()),
+                    market_url: build_polymarket_market_url(
+                        market.event_slug.as_deref(),
+                        market.slug.as_deref(),
+                    ),
                     image: market.image.clone(),
                     tags: flatten_tags(market),
                     reference_start_time: reference_start_time(market),
@@ -507,7 +513,10 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use polymarket_client_sdk::types::{dec, B256, U256};
 
-    use super::{build_opportunity_rows, classify_event_timing, EventTiming, MarketUiMetadata};
+    use super::{
+        build_opportunity_rows, build_polymarket_market_url, classify_event_timing, EventTiming,
+        MarketUiMetadata,
+    };
     use crate::models::{
         LiquidityInfo, Opportunity, OpportunityReason, OpportunityStatus, PricingZone,
     };
@@ -591,5 +600,17 @@ mod tests {
 
         assert_eq!(rows[0].event_timing, EventTiming::Started);
         assert_eq!(rows[0].time_to_start_human.as_deref(), Some("started"));
+    }
+
+    #[test]
+    fn market_url_prefers_event_slug_over_market_slug() {
+        assert_eq!(
+            build_polymarket_market_url(Some("event-slug"), Some("market-slug")).as_deref(),
+            Some("https://polymarket.com/event/event-slug")
+        );
+        assert_eq!(
+            build_polymarket_market_url(None, Some("market-slug")).as_deref(),
+            Some("https://polymarket.com/event/market-slug")
+        );
     }
 }
