@@ -35,6 +35,30 @@ export type OpportunityDetailDepthLevel = {
   note: string;
 };
 
+export type OpportunityOrderBookChartLevel = {
+  price: number;
+  bidShares: number;
+  askShares: number;
+  bidNotional: number;
+  askNotional: number;
+  bidCumulativeShares: number;
+  askCumulativeShares: number;
+  isRewardBand: boolean;
+  isSuggestedPrice: boolean;
+  isBestBid: boolean;
+  isBestAsk: boolean;
+  isMidpointBoundary: boolean;
+  isRewardFloor: boolean;
+};
+
+export type OpportunityOrderBookChart = {
+  levels: OpportunityOrderBookChartLevel[];
+  maxBidShares: number;
+  maxAskShares: number;
+  displayMinPrice: number;
+  displayMaxPrice: number;
+};
+
 export type OpportunityDetailPayload = {
   fetchedAt: string;
   snapshotGeneratedAt: string;
@@ -69,6 +93,7 @@ export type OpportunityDetailPayload = {
   status: string;
   reason: string;
   recommendation: OpportunityRecommendation;
+  orderBookChart: OpportunityOrderBookChart;
   depth: {
     bids: OpportunityDetailDepthLevel[];
     scaleMin: number;
@@ -143,6 +168,14 @@ function ceilToTick(value: number, tickSize: number) {
   }
 
   return roundToTick(Math.ceil((value - EPSILON) / tickSize) * tickSize, tickSize);
+}
+
+function floorToTick(value: number, tickSize: number) {
+  if (!(tickSize > 0)) {
+    return value;
+  }
+
+  return roundToTick(Math.floor((value + EPSILON) / tickSize) * tickSize, tickSize);
 }
 
 function priceAtCumulativeDepth(levels: BookLevel[], threshold: number) {
@@ -490,6 +523,128 @@ function scaleBounds(values: Array<number | null>) {
   return { scaleMin: min, scaleMax: max };
 }
 
+function samePrice(left: number | null, right: number | null) {
+  return left !== null && right !== null && Math.abs(left - right) < EPSILON;
+}
+
+function levelSizeAt(levels: BookLevel[], price: number) {
+  return levels
+    .filter((level) => samePrice(level.price, price))
+    .reduce((acc, level) => acc + level.size, 0);
+}
+
+function cumulativeBidSharesAt(levels: BookLevel[], price: number) {
+  return levels
+    .filter((level) => level.price >= price - EPSILON)
+    .reduce((acc, level) => acc + level.size, 0);
+}
+
+function cumulativeAskSharesAt(levels: BookLevel[], price: number) {
+  return levels
+    .filter((level) => level.price <= price + EPSILON)
+    .reduce((acc, level) => acc + level.size, 0);
+}
+
+function buildTickRange(minPrice: number, maxPrice: number, tickSize: number) {
+  const levels: number[] = [];
+  if (!(tickSize > 0) || maxPrice < minPrice) {
+    return levels;
+  }
+
+  for (
+    let price = maxPrice, guard = 0;
+    price >= minPrice - EPSILON && guard < 60;
+    price = roundToTick(price - tickSize, tickSize), guard += 1
+  ) {
+    levels.push(price);
+  }
+  return levels;
+}
+
+function buildOrderBookChart(input: {
+  bids: BookLevel[];
+  asks: BookLevel[];
+  tickSize: number;
+  rewardFloorPrice: number | null;
+  midpoint: number | null;
+  suggestedPrice: number | null;
+  bestBid: number | null;
+  bestAsk: number | null;
+}): OpportunityOrderBookChart {
+  const {
+    bids,
+    asks,
+    tickSize,
+    rewardFloorPrice,
+    midpoint,
+    suggestedPrice,
+    bestBid,
+    bestAsk
+  } = input;
+  const fallbackPrices = [...bids.slice(0, 4), ...asks.slice(0, 4)].map(
+    (level) => level.price
+  );
+  const anchorPrices = [
+    rewardFloorPrice,
+    midpoint,
+    suggestedPrice,
+    bestBid,
+    bestAsk,
+    ...fallbackPrices
+  ].filter((price): price is number => price !== null);
+  const minAnchor = anchorPrices.length > 0 ? Math.min(...anchorPrices) : 0.01;
+  const maxAnchor = anchorPrices.length > 0 ? Math.max(...anchorPrices) : 0.99;
+  const contextTicks = 3;
+  const displayMinPrice = Math.max(
+    tickSize,
+    floorToTick(minAnchor - tickSize * contextTicks, tickSize)
+  );
+  const displayMaxPrice = Math.min(
+    1 - tickSize,
+    ceilToTick(maxAnchor + tickSize * contextTicks, tickSize)
+  );
+  const prices = new Set(buildTickRange(displayMinPrice, displayMaxPrice, tickSize));
+
+  for (const price of anchorPrices) {
+    if (price >= displayMinPrice - EPSILON && price <= displayMaxPrice + EPSILON) {
+      prices.add(roundToTick(price, tickSize));
+    }
+  }
+
+  const sortedPrices = [...prices].sort((left, right) => right - left);
+  const levels = sortedPrices.map((price) => {
+    const bidShares = levelSizeAt(bids, price);
+    const askShares = levelSizeAt(asks, price);
+    return {
+      price,
+      bidShares,
+      askShares,
+      bidNotional: bidShares * price,
+      askNotional: askShares * price,
+      bidCumulativeShares: cumulativeBidSharesAt(bids, price),
+      askCumulativeShares: cumulativeAskSharesAt(asks, price),
+      isRewardBand:
+        rewardFloorPrice !== null &&
+        midpoint !== null &&
+        price >= rewardFloorPrice - EPSILON &&
+        price < midpoint - EPSILON,
+      isSuggestedPrice: samePrice(price, suggestedPrice),
+      isBestBid: samePrice(price, bestBid),
+      isBestAsk: samePrice(price, bestAsk),
+      isMidpointBoundary: samePrice(price, midpoint),
+      isRewardFloor: samePrice(price, rewardFloorPrice)
+    };
+  });
+
+  return {
+    levels,
+    maxBidShares: Math.max(1, ...levels.map((level) => level.bidShares)),
+    maxAskShares: Math.max(1, ...levels.map((level) => level.askShares)),
+    displayMinPrice,
+    displayMaxPrice
+  };
+}
+
 export async function fetchLiveBook(tokenId: string) {
   const url = new URL(CLOB_BOOK_URL);
   url.searchParams.set("token_id", tokenId);
@@ -767,6 +922,16 @@ export function computeOpportunityDetail(input: {
     status,
     reason,
     recommendation,
+    orderBookChart: buildOrderBookChart({
+      bids,
+      asks,
+      tickSize,
+      rewardFloorPrice,
+      midpoint,
+      suggestedPrice,
+      bestBid,
+      bestAsk
+    }),
     depth: {
       bids: compactDepth(bids, rewardFloorPrice, midpoint, suggestedPrice),
       scaleMin: bounds.scaleMin,

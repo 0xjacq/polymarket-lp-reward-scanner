@@ -249,23 +249,6 @@ function MetricCell({
   );
 }
 
-function markerPosition(
-  value: number | null,
-  scaleMin: number,
-  scaleMax: number
-) {
-  if (value === null) {
-    return null;
-  }
-
-  if (scaleMax - scaleMin <= 0) {
-    return 50;
-  }
-
-  const position = ((value - scaleMin) / (scaleMax - scaleMin)) * 100;
-  return Math.max(0, Math.min(100, position));
-}
-
 function actionLabel(action: OpportunityDetailPayload["recommendation"]["action"]) {
   if (action === "place_bid") {
     return "Place bid";
@@ -276,163 +259,89 @@ function actionLabel(action: OpportunityDetailPayload["recommendation"]["action"
   return "Do not place";
 }
 
-function PriceLadder({ detail }: { detail: OpportunityDetailPayload }) {
-  const bandStart = markerPosition(
-    detail.recommendation.rewardBandLow,
-    detail.depth.scaleMin,
-    detail.depth.scaleMax
-  );
-  const bandEnd = markerPosition(
-    detail.recommendation.rewardBandHigh,
-    detail.depth.scaleMin,
-    detail.depth.scaleMax
-  );
-  const markers = [
-    {
-      label: "Best bid",
-      value: detail.bestBid,
-      className: "marker-bid"
-    },
-    {
-      label: "Your bid",
-      value: detail.recommendation.limitPrice,
-      className: "marker-suggested"
-    },
-    {
-      label: "Midpoint",
-      value: detail.adjustedMidpoint,
-      className: "marker-midpoint"
-    },
-    {
-      label: "Best ask",
-      value: detail.bestAsk,
-      className: "marker-ask"
-    },
-    {
-      label: "Reward floor",
-      value: detail.recommendation.rewardBandLow,
-      className: "marker-floor"
-    }
-  ]
-    .map((marker) => ({
-      ...marker,
-      position: markerPosition(
-        marker.value,
-        detail.depth.scaleMin,
-        detail.depth.scaleMax
-      )
-    }))
-    .filter(
-      (
-        marker
-      ): marker is typeof marker & {
-        position: number;
-      } => marker.position !== null
-    );
+function OrderBookBandChart({ detail }: { detail: OpportunityDetailPayload }) {
+  const { orderBookChart } = detail;
 
   return (
-    <section className="price-ladder" aria-label="Reward price band">
-      <div className="price-ladder-copy">
-        <h3>Reward price band</h3>
+    <section className="orderbook-chart" aria-label="Reward order book ladder">
+      <div className="orderbook-copy">
+        <h3>Order book around the reward band</h3>
         <p>
-          Green is the price range where a bid can earn LP rewards. Your order
-          should stay inside this zone.
+          Green rows are eligible for rewards. Longer bars mean more shares
+          resting at that exact price.
         </p>
       </div>
 
-      <div className="price-ladder-track">
-        {bandStart !== null && bandEnd !== null && bandEnd > bandStart ? (
-          <div
-            className="price-band"
-            style={{
-              left: `${bandStart}%`,
-              width: `${bandEnd - bandStart}%`
-            }}
-          />
-        ) : null}
-
-        {markers.map((marker) => (
-          <div
-            key={marker.label}
-            className={`price-marker ${marker.className}`}
-            style={{ left: `${marker.position}%` }}
-          >
-            <span className="marker-line" />
-            <span className="marker-label">
-              {marker.label}
-              <strong>{formatCents(marker.value)}</strong>
-            </span>
-          </div>
-        ))}
-      </div>
-
-      <div className="price-ladder-scale">
-        <span>{formatCents(detail.depth.scaleMin)}</span>
-        <span>{formatCents(detail.depth.scaleMax)}</span>
-      </div>
-
-      {bandStart === null || bandEnd === null || bandEnd <= bandStart ? (
-        <p className="detail-empty">Reward band unavailable for this row.</p>
-      ) : null}
-    </section>
-  );
-}
-
-function QueueVisual({ detail }: { detail: OpportunityDetailPayload }) {
-  const maxSize = Math.max(
-    1,
-    ...detail.depth.bids.map((level) => level.size)
-  );
-  const order = detail.recommendation;
-
-  return (
-    <section className="queue-visual" aria-label="Queue near suggested price">
-      <div className="queue-copy">
-        <h3>Queue near your order</h3>
-        <p>
-          Queue ahead means existing orders that would share rewards before yours.
-        </p>
-      </div>
-
-      {detail.depth.bids.length === 0 ? (
-        <p className="detail-empty">No live bid depth was returned.</p>
+      {orderBookChart.levels.length === 0 ? (
+        <p className="detail-empty">No live order book depth was returned.</p>
       ) : (
-        <div className="queue-table">
-          <div className="queue-row queue-header">
+        <div className="orderbook-table">
+          <div className="orderbook-row orderbook-header">
+            <span>Bid shares at this price</span>
             <span>Price</span>
-            <span>Shares ahead</span>
-            <span>Why it matters</span>
+            <span>Ask shares at this price</span>
           </div>
 
-          {detail.depth.bids.map((level) => (
+          {orderBookChart.levels.map((level) => (
             <div
-              key={`${level.price}-${level.cumulativeShares}`}
-              className={`queue-row queue-${level.role}${
-                level.isSuggested ? " is-suggested" : ""
-              }`}
+              key={level.price}
+              className={[
+                "orderbook-row",
+                level.isRewardBand ? "is-reward-band" : "",
+                level.isSuggestedPrice ? "is-suggested-price" : "",
+                level.isBestBid ? "is-best-bid" : "",
+                level.isBestAsk ? "is-best-ask" : "",
+                level.isRewardFloor ? "is-reward-floor" : "",
+                level.isMidpointBoundary ? "is-midpoint-boundary" : ""
+              ]
+                .filter(Boolean)
+                .join(" ")}
             >
-              <span className="queue-price">{formatCents(level.price)}</span>
-              <span className="queue-size">
+              <div className="book-side book-bid-side">
                 <span
-                  className="queue-bar"
-                  style={{ width: `${Math.max(5, (level.size / maxSize) * 100)}%` }}
+                  className="book-bar book-bid-bar"
+                  style={{
+                    width:
+                      level.bidShares > 0
+                        ? `${Math.max(
+                            4,
+                            (level.bidShares / orderBookChart.maxBidShares) * 100
+                          )}%`
+                        : "0%"
+                  }}
                 />
-                <strong>{formatShares(level.size)}</strong>
-              </span>
-              <span className="queue-note">{level.note}</span>
+                <strong>{level.bidShares > 0 ? formatShares(level.bidShares) : "-"}</strong>
+              </div>
+
+              <div className="book-price-cell">
+                <strong>{formatCents(level.price)}</strong>
+                <span className="book-badges">
+                  {level.isSuggestedPrice ? <em>Your bid</em> : null}
+                  {level.isBestBid ? <em>Best bid</em> : null}
+                  {level.isBestAsk ? <em>Best ask</em> : null}
+                  {level.isRewardFloor ? <em>Reward floor</em> : null}
+                  {level.isMidpointBoundary ? <em>Midpoint</em> : null}
+                  {level.isRewardBand ? <em>Reward band</em> : null}
+                </span>
+              </div>
+
+              <div className="book-side book-ask-side">
+                <span
+                  className="book-bar book-ask-bar"
+                  style={{
+                    width:
+                      level.askShares > 0
+                        ? `${Math.max(
+                            4,
+                            (level.askShares / orderBookChart.maxAskShares) * 100
+                          )}%`
+                        : "0%"
+                  }}
+                />
+                <strong>{level.askShares > 0 ? formatShares(level.askShares) : "-"}</strong>
+              </div>
             </div>
           ))}
-
-          {order.limitPrice !== null && order.shares !== null ? (
-            <div className="queue-row your-order-row">
-              <span className="queue-price">{formatCents(order.limitPrice)}</span>
-              <span className="queue-size">
-                <span className="queue-bar your-order-bar" style={{ width: "100%" }} />
-                <strong>{formatShares(order.shares)}</strong>
-              </span>
-              <span className="queue-note">Your new order</span>
-            </div>
-          ) : null}
         </div>
       )}
     </section>
@@ -552,7 +461,7 @@ function LPDetailsPanel({
             </div>
           </section>
 
-          <PriceLadder detail={detail} />
+          <OrderBookBandChart detail={detail} />
 
           <div className="detail-sections lp-detail-sections">
             <section className="detail-card compact-detail-card">
@@ -593,8 +502,6 @@ function LPDetailsPanel({
               </div>
             </section>
           </div>
-
-          <QueueVisual detail={detail} />
 
           <section className="detail-card compact-detail-card">
             <h3>Reward estimate</h3>

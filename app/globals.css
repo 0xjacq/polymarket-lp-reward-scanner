@@ -405,16 +405,14 @@ a {
 
 .recommendation-main h3,
 .order-ticket h3,
-.price-ladder h3,
-.queue-visual h3,
+.orderbook-chart h3,
 .detail-card h3 {
   margin: 0;
   font-size: 1rem;
 }
 
 .recommendation-main p,
-.price-ladder-copy p,
-.queue-copy p {
+.orderbook-copy p {
   margin: 6px 0 0;
   color: var(--muted);
   line-height: 1.45;
@@ -500,8 +498,7 @@ a {
   font-size: 1.18rem;
 }
 
-.price-ladder,
-.queue-visual {
+.orderbook-chart {
   display: grid;
   gap: 12px;
   padding: 16px;
@@ -510,70 +507,8 @@ a {
   background: var(--surface);
 }
 
-.price-ladder-copy,
-.queue-copy {
+.orderbook-copy {
   max-width: 72ch;
-}
-
-.price-ladder-track {
-  position: relative;
-  height: 112px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background:
-    linear-gradient(90deg, rgba(242, 109, 61, 0.1), transparent 20%, transparent 80%, rgba(242, 109, 61, 0.1)),
-    var(--surface-soft);
-  overflow: hidden;
-}
-
-.price-band {
-  position: absolute;
-  top: 28px;
-  height: 34px;
-  border-radius: 6px;
-  background: rgba(31, 199, 122, 0.25);
-  border: 1px solid rgba(31, 199, 122, 0.5);
-}
-
-.price-marker {
-  position: absolute;
-  top: 14px;
-  bottom: 14px;
-  transform: translateX(-50%);
-  display: grid;
-  justify-items: center;
-  align-content: start;
-  min-width: 86px;
-  color: var(--muted);
-}
-
-.marker-line {
-  width: 2px;
-  height: 56px;
-  background: currentColor;
-}
-
-.marker-label {
-  display: grid;
-  gap: 2px;
-  margin-top: 6px;
-  padding: 4px 7px;
-  border-radius: 6px;
-  background: rgba(16, 19, 18, 0.94);
-  text-align: center;
-  font-size: 0.74rem;
-  line-height: 1.1;
-}
-
-.marker-label strong {
-  font-size: 0.82rem;
-}
-
-.price-ladder-scale {
-  display: flex;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 0.84rem;
 }
 
 .lp-detail-sections {
@@ -584,23 +519,24 @@ a {
   background: var(--surface);
 }
 
-.queue-table {
+.orderbook-table {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
-.queue-row {
+.orderbook-row {
   display: grid;
-  grid-template-columns: 86px minmax(0, 1fr) minmax(160px, 0.8fr);
+  grid-template-columns: minmax(0, 1fr) 112px minmax(0, 1fr);
   gap: 12px;
   align-items: center;
-  padding: 9px 10px;
+  min-height: 36px;
+  padding: 7px 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface-soft);
 }
 
-.queue-header {
+.orderbook-header {
   background: transparent;
   border-color: transparent;
   color: var(--muted);
@@ -609,139 +545,137 @@ a {
   padding-bottom: 0;
 }
 
-.queue-price {
-  font-weight: 700;
+.orderbook-header span:first-child,
+.book-bid-side {
+  text-align: right;
 }
 
-.queue-size {
+.book-side {
   position: relative;
   min-height: 24px;
   display: flex;
   align-items: center;
+  overflow: hidden;
+}
+
+.book-bid-side {
   justify-content: flex-end;
+}
+
+.book-ask-side {
+  justify-content: flex-start;
+}
+
+.book-side strong {
+  position: relative;
+  z-index: 1;
+  padding: 0 8px;
+  font-size: 0.86rem;
+  color: var(--text);
+}
+
+.book-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 6px;
+}
+
+.book-bid-bar {
+  right: 0;
+  background: rgba(31, 199, 122, 0.5);
+}
+
+.book-ask-bar {
+  left: 0;
+  background: rgba(242, 109, 61, 0.48);
+}
+
+.book-price-cell {
+  display: grid;
+  gap: 3px;
+  justify-items: center;
+  min-width: 0;
+  padding: 3px 4px;
+  border-radius: 6px;
+  background: rgba(16, 19, 18, 0.42);
+}
+
+.book-price-cell strong {
+  line-height: 1;
+}
+
+.book-badges {
+  display: flex;
+  justify-content: center;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.book-badges em {
+  font-style: normal;
+  font-size: 0.64rem;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+  color: #dbe6e0;
+  background: rgba(136, 164, 168, 0.18);
+}
+
+.orderbook-row.is-reward-band {
+  border-color: rgba(31, 199, 122, 0.42);
+  background: rgba(31, 199, 122, 0.08);
+}
+
+.orderbook-row.is-suggested-price {
+  border-color: rgba(31, 199, 122, 0.8);
+  background: rgba(31, 199, 122, 0.16);
+}
+
+.orderbook-row.is-reward-floor .book-price-cell {
+  outline: 1px solid rgba(240, 184, 74, 0.7);
+}
+
+.orderbook-row.is-midpoint-boundary {
+  border-top-color: rgba(122, 182, 255, 0.72);
+}
+
+.orderbook-row.is-best-bid .book-badges em,
+.orderbook-row.is-suggested-price .book-badges em {
+  color: #101312;
+  background: var(--green);
+}
+
+.orderbook-row.is-best-ask .book-badges em {
+  color: #101312;
+  background: var(--coral);
+}
+
+.orderbook-row.is-midpoint-boundary .book-badges em {
+  color: #101312;
+  background: var(--blue);
+}
+
+.orderbook-row.is-reward-floor .book-badges em {
+  color: #101312;
+  background: var(--gold);
+}
+
+.orderbook-row.is-reward-band .book-badges em {
+  color: #d9f7e7;
+  background: rgba(31, 199, 122, 0.18);
+}
+
+.orderbook-row.is-suggested-price .book-badges em:first-child {
+  color: #101312;
+  background: var(--green);
+}
+
+.book-side {
   overflow: hidden;
   border-radius: 999px;
   background: var(--surface-strong);
   border: 1px solid var(--border);
-}
-
-.queue-size strong {
-  position: relative;
-  padding: 0 8px;
-  font-size: 0.86rem;
-}
-
-.queue-bar {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  border-radius: 999px;
-  background: rgba(240, 184, 74, 0.45);
-}
-
-.queue-below_order .queue-bar {
-  background: rgba(136, 164, 168, 0.34);
-}
-
-.queue-outside_band {
-  color: var(--muted);
-}
-
-.queue-outside_band .queue-bar {
-  background: rgba(136, 164, 168, 0.2);
-}
-
-.your-order-row {
-  border-color: rgba(31, 199, 122, 0.55);
-  background: rgba(31, 199, 122, 0.08);
-}
-
-.your-order-bar {
-  background: rgba(31, 199, 122, 0.55);
-}
-
-.queue-note {
-  color: var(--muted);
-  font-size: 0.88rem;
-}
-
-.lp-chart {
-  display: grid;
-  gap: 8px;
-}
-
-.lp-chart-track {
-  position: relative;
-  height: 78px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
-    var(--surface);
-  overflow: hidden;
-}
-
-.lp-band {
-  position: absolute;
-  top: 18px;
-  height: 42px;
-  border-radius: 6px;
-  background: rgba(31, 199, 122, 0.18);
-  border: 1px solid rgba(31, 199, 122, 0.38);
-}
-
-.lp-marker {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  transform: translateX(-50%);
-  display: grid;
-  justify-items: center;
-}
-
-.lp-marker span {
-  margin-top: 12px;
-  width: 2px;
-  height: 36px;
-  background: currentColor;
-}
-
-.lp-marker small {
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 0.76rem;
-  background: rgba(16, 19, 18, 0.92);
-  padding: 2px 6px;
-  border-radius: 6px;
-  white-space: nowrap;
-}
-
-.marker-floor {
-  color: var(--gold);
-}
-
-.marker-suggested {
-  color: var(--green);
-}
-
-.marker-bid {
-  color: #d8eaed;
-}
-
-.marker-midpoint {
-  color: var(--blue);
-}
-
-.marker-ask {
-  color: var(--coral);
-}
-
-.lp-scale {
-  display: flex;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 0.84rem;
 }
 
 .detail-sections {
@@ -768,57 +702,6 @@ a {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-}
-
-.depth-table {
-  display: grid;
-  gap: 8px;
-}
-
-.depth-row {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) 72px 84px;
-  gap: 10px;
-  align-items: center;
-}
-
-.depth-row.is-in-band .depth-price {
-  color: #c8ffe2;
-}
-
-.depth-row.is-suggested {
-  color: #d9f7e7;
-}
-
-.depth-row.is-suggested .depth-bar-shell {
-  border-color: rgba(31, 199, 122, 0.45);
-  background: rgba(31, 199, 122, 0.08);
-}
-
-.depth-price,
-.depth-size,
-.depth-queue {
-  font-size: 0.86rem;
-}
-
-.depth-size,
-.depth-queue {
-  text-align: right;
-  color: var(--muted);
-}
-
-.depth-bar-shell {
-  height: 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface-strong);
-  overflow: hidden;
-}
-
-.depth-bar {
-  height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(31, 199, 122, 0.85), rgba(122, 182, 255, 0.82));
 }
 
 .detail-empty {
@@ -875,8 +758,7 @@ a {
 
   .ticket-grid,
   .recommendation-metrics,
-  .detail-grid,
-  .queue-row {
+  .detail-grid {
     grid-template-columns: 1fr;
   }
 
@@ -884,11 +766,19 @@ a {
     grid-template-columns: 1fr;
   }
 
-  .price-marker {
-    min-width: 64px;
+  .orderbook-row {
+    grid-template-columns: minmax(0, 1fr) 84px minmax(0, 1fr);
+    gap: 8px;
+    padding: 7px;
   }
 
-  .marker-label {
-    font-size: 0.68rem;
+  .book-badges em {
+    font-size: 0.58rem;
+    padding: 2px 4px;
+  }
+
+  .book-side strong {
+    font-size: 0.78rem;
+    padding: 0 5px;
   }
 }
