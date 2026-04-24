@@ -259,91 +259,214 @@ function actionLabel(action: OpportunityDetailPayload["recommendation"]["action"
   return "Do not place";
 }
 
-function OrderBookBandChart({ detail }: { detail: OpportunityDetailPayload }) {
-  const { orderBookChart } = detail;
+function chartY(value: number, minPrice: number, maxPrice: number) {
+  if (maxPrice - minPrice <= 0) {
+    return 210;
+  }
+
+  return 360 - ((value - minPrice) / (maxPrice - minPrice)) * 300;
+}
+
+function clampChartY(value: number) {
+  return Math.max(48, Math.min(372, value));
+}
+
+function MarketPriceDepthChart({ detail }: { detail: OpportunityDetailPayload }) {
+  const { orderBookChart, priceChart } = detail;
+  const history = priceChart.points;
+  const priceAnchors = [
+    priceChart.minPrice,
+    priceChart.maxPrice,
+    detail.recommendation.rewardBandLow,
+    detail.recommendation.rewardBandHigh,
+    detail.recommendation.limitPrice,
+    detail.bestBid,
+    detail.bestAsk,
+    ...orderBookChart.levels.map((level) => level.price)
+  ].filter((value): value is number => value !== null && Number.isFinite(value));
+  const rawMin = priceAnchors.length > 0 ? Math.min(...priceAnchors) : 0;
+  const rawMax = priceAnchors.length > 0 ? Math.max(...priceAnchors) : 1;
+  const padding = Math.max(0.02, (rawMax - rawMin) * 0.12);
+  const minPrice = Math.max(0, rawMin - padding);
+  const maxPrice = Math.min(1, rawMax + padding);
+  const minTimestamp =
+    history.length > 0 ? Math.min(...history.map((point) => point.timestamp)) : 0;
+  const maxTimestamp =
+    history.length > 0 ? Math.max(...history.map((point) => point.timestamp)) : 1;
+  const xForTime = (timestamp: number) => {
+    if (maxTimestamp - minTimestamp <= 0) {
+      return 384;
+    }
+    return 56 + ((timestamp - minTimestamp) / (maxTimestamp - minTimestamp)) * 656;
+  };
+  const historyPath = history
+    .map((point, index) => {
+      const command = index === 0 ? "M" : "L";
+      return `${command}${xForTime(point.timestamp).toFixed(1)},${chartY(
+        point.price,
+        minPrice,
+        maxPrice
+      ).toFixed(1)}`;
+    })
+    .join(" ");
+  const rewardLow = detail.recommendation.rewardBandLow;
+  const rewardHigh = detail.recommendation.rewardBandHigh;
+  const bandTop =
+    rewardHigh === null ? null : clampChartY(chartY(rewardHigh, minPrice, maxPrice));
+  const bandBottom =
+    rewardLow === null ? null : clampChartY(chartY(rewardLow, minPrice, maxPrice));
+  const guideLines = [
+    { label: "Best ask", value: detail.bestAsk, className: "ask-guide" },
+    { label: "Your bid", value: detail.recommendation.limitPrice, className: "bid-guide" },
+    { label: "Best bid", value: detail.bestBid, className: "bid-guide" }
+  ];
+  const priceTicks = [0, 0.25, 0.5, 0.75, 1].map(
+    (ratio) => minPrice + (maxPrice - minPrice) * ratio
+  );
+  const maxDepth = Math.max(
+    1,
+    orderBookChart.maxBidShares,
+    orderBookChart.maxAskShares
+  );
+  const visibleDepthLevels = orderBookChart.levels.filter(
+    (level) =>
+      level.bidShares > 0 ||
+      level.askShares > 0 ||
+      level.isRewardBand ||
+      level.isSuggestedPrice ||
+      level.isBestBid ||
+      level.isBestAsk ||
+      level.isRewardFloor ||
+      level.isMidpointBoundary
+  );
 
   return (
-    <section className="orderbook-chart" aria-label="Reward order book ladder">
-      <div className="orderbook-copy">
-        <h3>Order book around the reward band</h3>
+    <section className="market-chart-card" aria-label="Price chart and reward band">
+      <div className="market-chart-copy">
+        <h3>Price chart and rewarded liquidity</h3>
         <p>
-          Green rows are eligible for rewards. Longer bars mean more shares
-          resting at that exact price.
+          The green band is where your bid can earn rewards. Bars on the right
+          show live shares at each price.
         </p>
       </div>
 
-      {orderBookChart.levels.length === 0 ? (
-        <p className="detail-empty">No live order book depth was returned.</p>
-      ) : (
-        <div className="orderbook-table">
-          <div className="orderbook-row orderbook-header">
-            <span>Bid shares at this price</span>
-            <span>Price</span>
-            <span>Ask shares at this price</span>
-          </div>
+      <div className="market-chart-wrap">
+        <svg className="market-chart" viewBox="0 0 1000 420" role="img">
+          <defs>
+            <linearGradient id="priceLineGradient" x1="0" x2="1" y1="0" y2="0">
+              <stop offset="0%" stopColor="#7ab6ff" />
+              <stop offset="100%" stopColor="#1fc77a" />
+            </linearGradient>
+          </defs>
 
-          {orderBookChart.levels.map((level) => (
-            <div
-              key={level.price}
-              className={[
-                "orderbook-row",
-                level.isRewardBand ? "is-reward-band" : "",
-                level.isSuggestedPrice ? "is-suggested-price" : "",
-                level.isBestBid ? "is-best-bid" : "",
-                level.isBestAsk ? "is-best-ask" : "",
-                level.isRewardFloor ? "is-reward-floor" : "",
-                level.isMidpointBoundary ? "is-midpoint-boundary" : ""
-              ]
-                .filter(Boolean)
-                .join(" ")}
-            >
-              <div className="book-side book-bid-side">
-                <span
-                  className="book-bar book-bid-bar"
-                  style={{
-                    width:
-                      level.bidShares > 0
-                        ? `${Math.max(
-                            4,
-                            (level.bidShares / orderBookChart.maxBidShares) * 100
-                          )}%`
-                        : "0%"
-                  }}
-                />
-                <strong>{level.bidShares > 0 ? formatShares(level.bidShares) : "-"}</strong>
-              </div>
+          <rect className="chart-panel" x="40" y="36" width="900" height="336" rx="8" />
 
-              <div className="book-price-cell">
-                <strong>{formatCents(level.price)}</strong>
-                <span className="book-badges">
-                  {level.isSuggestedPrice ? <em>Your bid</em> : null}
-                  {level.isBestBid ? <em>Best bid</em> : null}
-                  {level.isBestAsk ? <em>Best ask</em> : null}
-                  {level.isRewardFloor ? <em>Reward floor</em> : null}
-                  {level.isMidpointBoundary ? <em>Midpoint</em> : null}
-                  {level.isRewardBand ? <em>Reward band</em> : null}
-                </span>
-              </div>
+          {priceTicks.map((tick) => {
+            const y = chartY(tick, minPrice, maxPrice);
+            return (
+              <g key={tick}>
+                <line className="chart-grid" x1="56" x2="940" y1={y} y2={y} />
+                <text className="chart-axis-label" x="948" y={y + 4}>
+                  {formatCents(tick)}
+                </text>
+              </g>
+            );
+          })}
 
-              <div className="book-side book-ask-side">
-                <span
-                  className="book-bar book-ask-bar"
-                  style={{
-                    width:
-                      level.askShares > 0
-                        ? `${Math.max(
-                            4,
-                            (level.askShares / orderBookChart.maxAskShares) * 100
-                          )}%`
-                        : "0%"
-                  }}
-                />
-                <strong>{level.askShares > 0 ? formatShares(level.askShares) : "-"}</strong>
-              </div>
-            </div>
-          ))}
+          {bandTop !== null && bandBottom !== null && bandBottom > bandTop ? (
+            <>
+              <rect
+                className="chart-reward-band"
+                x="56"
+                y={bandTop}
+                width="884"
+                height={bandBottom - bandTop}
+                rx="6"
+              />
+              <text className="chart-band-label" x="66" y={bandTop + 18}>
+                Reward band
+              </text>
+            </>
+          ) : null}
+
+          {historyPath ? (
+            <path className="chart-price-line" d={historyPath} />
+          ) : (
+            <text className="chart-empty-label" x="340" y="210">
+              No price history returned
+            </text>
+          )}
+
+          {history.length > 0 ? (
+            <circle
+              className="chart-last-dot"
+              cx={xForTime(history[history.length - 1].timestamp)}
+              cy={chartY(history[history.length - 1].price, minPrice, maxPrice)}
+              r="5"
+            />
+          ) : null}
+
+          {guideLines.map((line) => {
+            if (line.value === null) {
+              return null;
+            }
+            const y = chartY(line.value, minPrice, maxPrice);
+            return (
+              <g key={line.label}>
+                <line className={`chart-guide ${line.className}`} x1="56" x2="940" y1={y} y2={y} />
+                <text className={`chart-guide-label ${line.className}`} x="60" y={y - 6}>
+                  {line.label} {formatCents(line.value)}
+                </text>
+              </g>
+            );
+          })}
+
+          <line className="depth-divider" x1="738" x2="738" y1="36" y2="372" />
+          <text className="depth-title" x="758" y="58">Live depth</text>
+
+          {visibleDepthLevels.map((level) => {
+            const y = chartY(level.price, minPrice, maxPrice);
+            const bidWidth = Math.min(84, (level.bidShares / maxDepth) * 84);
+            const askWidth = Math.min(84, (level.askShares / maxDepth) * 84);
+            return (
+              <g key={level.price}>
+                {level.bidShares > 0 ? (
+                  <rect
+                    className="depth-bid"
+                    x={828 - bidWidth}
+                    y={y - 5}
+                    width={Math.max(2, bidWidth)}
+                    height="10"
+                    rx="5"
+                  />
+                ) : null}
+                {level.askShares > 0 ? (
+                  <rect
+                    className="depth-ask"
+                    x="844"
+                    y={y - 5}
+                    width={Math.max(2, askWidth)}
+                    height="10"
+                    rx="5"
+                  />
+                ) : null}
+                {(level.isSuggestedPrice || level.isBestBid || level.isBestAsk || level.isRewardFloor) ? (
+                  <text className="depth-price-label" x="750" y={y + 4}>
+                    {formatCents(level.price)}
+                  </text>
+                ) : null}
+              </g>
+            );
+          })}
+        </svg>
+
+        <div className="chart-legend">
+          <span><i className="legend-price" /> Price history</span>
+          <span><i className="legend-band" /> Reward band</span>
+          <span><i className="legend-bid" /> Bid shares</span>
+          <span><i className="legend-ask" /> Ask shares</span>
         </div>
-      )}
+      </div>
     </section>
   );
 }
@@ -461,7 +584,7 @@ function LPDetailsPanel({
             </div>
           </section>
 
-          <OrderBookBandChart detail={detail} />
+          <MarketPriceDepthChart detail={detail} />
 
           <div className="detail-sections lp-detail-sections">
             <section className="detail-card compact-detail-card">

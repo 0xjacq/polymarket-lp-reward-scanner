@@ -1,6 +1,7 @@
 import type { OpportunityRow, SnapshotMeta } from "@/lib/snapshot";
 
 const CLOB_BOOK_URL = "https://clob.polymarket.com/book";
+const CLOB_PRICE_HISTORY_URL = "https://clob.polymarket.com/prices-history";
 const SINGLE_SIDED_PENALTY = 3;
 const EPSILON = 1e-9;
 
@@ -19,9 +20,23 @@ type LiveBookResponse = {
   timestamp?: unknown;
 };
 
+type RawPriceHistoryPoint = {
+  t?: unknown;
+  p?: unknown;
+};
+
+type PriceHistoryResponse = {
+  history?: RawPriceHistoryPoint[];
+};
+
 type BookLevel = {
   price: number;
   size: number;
+};
+
+export type OpportunityPriceHistoryPoint = {
+  timestamp: number;
+  price: number;
 };
 
 export type OpportunityDetailDepthLevel = {
@@ -59,6 +74,13 @@ export type OpportunityOrderBookChart = {
   displayMaxPrice: number;
 };
 
+export type OpportunityPriceChart = {
+  points: OpportunityPriceHistoryPoint[];
+  minPrice: number | null;
+  maxPrice: number | null;
+  interval: "1d" | "1w";
+};
+
 export type OpportunityDetailPayload = {
   fetchedAt: string;
   snapshotGeneratedAt: string;
@@ -94,6 +116,7 @@ export type OpportunityDetailPayload = {
   reason: string;
   recommendation: OpportunityRecommendation;
   orderBookChart: OpportunityOrderBookChart;
+  priceChart: OpportunityPriceChart;
   depth: {
     bids: OpportunityDetailDepthLevel[];
     scaleMin: number;
@@ -149,6 +172,31 @@ function normalizeLevels(value: unknown, side: "bids" | "asks"): BookLevel[] {
     side === "bids" ? right.price - left.price : left.price - right.price
   );
   return levels;
+}
+
+function normalizeHistory(value: unknown): OpportunityPriceHistoryPoint[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      const point = entry as RawPriceHistoryPoint;
+      const timestamp = toNumber(point.t);
+      const price = toNumber(point.p);
+      if (
+        timestamp === null ||
+        price === null ||
+        timestamp <= 0 ||
+        price < 0 ||
+        price > 1
+      ) {
+        return null;
+      }
+      return { timestamp, price };
+    })
+    .filter((point): point is OpportunityPriceHistoryPoint => point !== null)
+    .sort((left, right) => left.timestamp - right.timestamp);
 }
 
 function stepPrecision(step: number) {
@@ -679,6 +727,42 @@ export async function fetchLiveBook(tokenId: string) {
   };
 }
 
+async function fetchPriceHistoryForInterval(
+  tokenId: string,
+  interval: "1d" | "1w",
+  fidelity: number
+) {
+  const url = new URL(CLOB_PRICE_HISTORY_URL);
+  url.searchParams.set("market", tokenId);
+  url.searchParams.set("interval", interval);
+  url.searchParams.set("fidelity", String(fidelity));
+
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = (await response.json()) as PriceHistoryResponse;
+  return normalizeHistory(payload.history);
+}
+
+export async function fetchPriceHistory(tokenId: string): Promise<OpportunityPriceChart> {
+  let interval: OpportunityPriceChart["interval"] = "1d";
+  let points = await fetchPriceHistoryForInterval(tokenId, "1d", 15);
+
+  if (points.length < 2) {
+    interval = "1w";
+    points = await fetchPriceHistoryForInterval(tokenId, "1w", 60);
+  }
+
+  return {
+    points,
+    minPrice: points.length > 0 ? Math.min(...points.map((point) => point.price)) : null,
+    maxPrice: points.length > 0 ? Math.max(...points.map((point) => point.price)) : null,
+    interval
+  };
+}
+
 export function computeOpportunityDetail(input: {
   row: OpportunityRow;
   meta: SnapshotMeta;
@@ -686,10 +770,21 @@ export function computeOpportunityDetail(input: {
   quoteSizeUsdc: number;
   bids: BookLevel[];
   asks: BookLevel[];
+  priceChart: OpportunityPriceChart;
   tickSize: number;
   fetchedAt: string;
 }): OpportunityDetailPayload {
-  const { row, meta, mode, quoteSizeUsdc, bids, asks, tickSize, fetchedAt } = input;
+  const {
+    row,
+    meta,
+    mode,
+    quoteSizeUsdc,
+    bids,
+    asks,
+    priceChart,
+    tickSize,
+    fetchedAt
+  } = input;
   const spreadBand = row.rewardsMaxSpread / 100;
   const bestBid = bids[0]?.price ?? null;
   const bestAsk = asks[0]?.price ?? null;
@@ -932,6 +1027,7 @@ export function computeOpportunityDetail(input: {
       bestBid,
       bestAsk
     }),
+    priceChart,
     depth: {
       bids: compactDepth(bids, rewardFloorPrice, midpoint, suggestedPrice),
       scaleMin: bounds.scaleMin,

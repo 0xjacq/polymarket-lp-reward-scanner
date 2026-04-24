@@ -405,14 +405,14 @@ a {
 
 .recommendation-main h3,
 .order-ticket h3,
-.orderbook-chart h3,
+.market-chart-card h3,
 .detail-card h3 {
   margin: 0;
   font-size: 1rem;
 }
 
 .recommendation-main p,
-.orderbook-copy p {
+.market-chart-copy p {
   margin: 6px 0 0;
   color: var(--muted);
   line-height: 1.45;
@@ -498,7 +498,7 @@ a {
   font-size: 1.18rem;
 }
 
-.orderbook-chart {
+.market-chart-card {
   display: grid;
   gap: 12px;
   padding: 16px;
@@ -507,8 +507,146 @@ a {
   background: var(--surface);
 }
 
-.orderbook-copy {
+.market-chart-copy {
   max-width: 72ch;
+}
+
+.market-chart-wrap {
+  display: grid;
+  gap: 10px;
+}
+
+.market-chart {
+  width: 100%;
+  min-height: 320px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.chart-panel {
+  fill: rgba(16, 19, 18, 0.64);
+  stroke: rgba(136, 164, 168, 0.18);
+}
+
+.chart-grid {
+  stroke: rgba(136, 164, 168, 0.16);
+  stroke-width: 1;
+}
+
+.chart-axis-label,
+.depth-price-label,
+.depth-title {
+  fill: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.chart-reward-band {
+  fill: rgba(31, 199, 122, 0.16);
+  stroke: rgba(31, 199, 122, 0.72);
+  stroke-width: 1.5;
+}
+
+.chart-band-label {
+  fill: #d9f7e7;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.chart-price-line {
+  fill: none;
+  stroke: url(#priceLineGradient);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chart-last-dot {
+  fill: var(--green);
+  stroke: #101312;
+  stroke-width: 2;
+}
+
+.chart-guide {
+  stroke-width: 1.5;
+  stroke-dasharray: 6 6;
+}
+
+.chart-guide.bid-guide {
+  stroke: rgba(31, 199, 122, 0.72);
+}
+
+.chart-guide.ask-guide {
+  stroke: rgba(242, 109, 61, 0.72);
+}
+
+.chart-guide-label {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.chart-guide-label.bid-guide {
+  fill: #d9f7e7;
+}
+
+.chart-guide-label.ask-guide {
+  fill: #ffd7ca;
+}
+
+.chart-empty-label {
+  fill: var(--muted);
+  font-size: 16px;
+}
+
+.depth-divider {
+  stroke: rgba(136, 164, 168, 0.22);
+  stroke-width: 1;
+}
+
+.depth-bid {
+  fill: rgba(31, 199, 122, 0.72);
+}
+
+.depth-ask {
+  fill: rgba(242, 109, 61, 0.72);
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.chart-legend span {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.chart-legend i {
+  width: 18px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.legend-price {
+  background: linear-gradient(90deg, var(--blue), var(--green));
+}
+
+.legend-band {
+  background: rgba(31, 199, 122, 0.32);
+  border: 1px solid rgba(31, 199, 122, 0.7);
+}
+
+.legend-bid {
+  background: rgba(31, 199, 122, 0.72);
+}
+
+.legend-ask {
+  background: rgba(242, 109, 61, 0.72);
 }
 
 .lp-detail-sections {
@@ -517,165 +655,6 @@ a {
 
 .compact-detail-card {
   background: var(--surface);
-}
-
-.orderbook-table {
-  display: grid;
-  gap: 6px;
-}
-
-.orderbook-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 112px minmax(0, 1fr);
-  gap: 12px;
-  align-items: center;
-  min-height: 36px;
-  padding: 7px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface-soft);
-}
-
-.orderbook-header {
-  background: transparent;
-  border-color: transparent;
-  color: var(--muted);
-  font-size: 0.82rem;
-  padding-top: 0;
-  padding-bottom: 0;
-}
-
-.orderbook-header span:first-child,
-.book-bid-side {
-  text-align: right;
-}
-
-.book-side {
-  position: relative;
-  min-height: 24px;
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-}
-
-.book-bid-side {
-  justify-content: flex-end;
-}
-
-.book-ask-side {
-  justify-content: flex-start;
-}
-
-.book-side strong {
-  position: relative;
-  z-index: 1;
-  padding: 0 8px;
-  font-size: 0.86rem;
-  color: var(--text);
-}
-
-.book-bar {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  border-radius: 6px;
-}
-
-.book-bid-bar {
-  right: 0;
-  background: rgba(31, 199, 122, 0.5);
-}
-
-.book-ask-bar {
-  left: 0;
-  background: rgba(242, 109, 61, 0.48);
-}
-
-.book-price-cell {
-  display: grid;
-  gap: 3px;
-  justify-items: center;
-  min-width: 0;
-  padding: 3px 4px;
-  border-radius: 6px;
-  background: rgba(16, 19, 18, 0.42);
-}
-
-.book-price-cell strong {
-  line-height: 1;
-}
-
-.book-badges {
-  display: flex;
-  justify-content: center;
-  gap: 3px;
-  flex-wrap: wrap;
-}
-
-.book-badges em {
-  font-style: normal;
-  font-size: 0.64rem;
-  line-height: 1;
-  padding: 3px 5px;
-  border-radius: 4px;
-  color: #dbe6e0;
-  background: rgba(136, 164, 168, 0.18);
-}
-
-.orderbook-row.is-reward-band {
-  border-color: rgba(31, 199, 122, 0.42);
-  background: rgba(31, 199, 122, 0.08);
-}
-
-.orderbook-row.is-suggested-price {
-  border-color: rgba(31, 199, 122, 0.8);
-  background: rgba(31, 199, 122, 0.16);
-}
-
-.orderbook-row.is-reward-floor .book-price-cell {
-  outline: 1px solid rgba(240, 184, 74, 0.7);
-}
-
-.orderbook-row.is-midpoint-boundary {
-  border-top-color: rgba(122, 182, 255, 0.72);
-}
-
-.orderbook-row.is-best-bid .book-badges em,
-.orderbook-row.is-suggested-price .book-badges em {
-  color: #101312;
-  background: var(--green);
-}
-
-.orderbook-row.is-best-ask .book-badges em {
-  color: #101312;
-  background: var(--coral);
-}
-
-.orderbook-row.is-midpoint-boundary .book-badges em {
-  color: #101312;
-  background: var(--blue);
-}
-
-.orderbook-row.is-reward-floor .book-badges em {
-  color: #101312;
-  background: var(--gold);
-}
-
-.orderbook-row.is-reward-band .book-badges em {
-  color: #d9f7e7;
-  background: rgba(31, 199, 122, 0.18);
-}
-
-.orderbook-row.is-suggested-price .book-badges em:first-child {
-  color: #101312;
-  background: var(--green);
-}
-
-.book-side {
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--surface-strong);
-  border: 1px solid var(--border);
 }
 
 .detail-sections {
@@ -766,19 +745,11 @@ a {
     grid-template-columns: 1fr;
   }
 
-  .orderbook-row {
-    grid-template-columns: minmax(0, 1fr) 84px minmax(0, 1fr);
-    gap: 8px;
-    padding: 7px;
+  .market-chart {
+    min-height: 260px;
   }
 
-  .book-badges em {
-    font-size: 0.58rem;
-    padding: 2px 4px;
-  }
-
-  .book-side strong {
+  .chart-legend {
     font-size: 0.78rem;
-    padding: 0 5px;
   }
 }

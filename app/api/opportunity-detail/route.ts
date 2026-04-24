@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import {
   computeOpportunityDetail,
   fetchLiveBook,
+  fetchPriceHistory,
   type DetailMode
 } from "@/lib/opportunity-detail";
 import { formatSnapshotError, getSnapshot } from "@/lib/snapshot";
@@ -49,7 +50,10 @@ export async function GET(request: NextRequest) {
       request.nextUrl.searchParams.get("quoteSizeUsdc"),
       snapshot.meta.quoteSizeUsdc
     );
-    const liveBook = await fetchLiveBook(tokenId);
+    const [liveBook, priceChart] = await Promise.all([
+      fetchLiveBook(tokenId),
+      fetchPriceHistory(tokenId)
+    ]);
     const payload = computeOpportunityDetail({
       row,
       meta: snapshot.meta,
@@ -57,6 +61,7 @@ export async function GET(request: NextRequest) {
       quoteSizeUsdc,
       bids: liveBook.bids,
       asks: liveBook.asks,
+      priceChart,
       tickSize: liveBook.tickSize,
       fetchedAt: liveBook.fetchedAt
     });
