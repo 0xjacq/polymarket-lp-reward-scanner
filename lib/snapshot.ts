@@ -16,6 +16,9 @@ export type SnapshotMeta = {
   generatedAt: string;
   scanDurationMs: number;
   sourceVersion: string;
+  quoteSizeUsdc: number;
+  minQueueMultiple: number;
+  competitivenessP90: number | null;
   snapshotSource: SnapshotSource;
   snapshotHealth: SnapshotHealth;
   snapshotAgeMs: number;
@@ -52,6 +55,8 @@ export type OpportunityRow = {
   eventTiming: EventTiming;
   timeToStartHuman: string | null;
   rewardDailyRate: number;
+  rewardsMaxSpread: number;
+  rewardsMinSize: number;
   pricingZone: string | null;
   marketCompetitiveness: number | null;
   spreadRatio: number | null;
@@ -125,6 +130,9 @@ function normalizeMeta(value: unknown, source: SnapshotSource): SnapshotMeta {
       generatedAt: toStringValue(input.generatedAt) ?? new Date(0).toISOString(),
       scanDurationMs: toNumber(input.scanDurationMs) ?? 0,
       sourceVersion: toStringValue(input.sourceVersion) ?? "unknown",
+      quoteSizeUsdc: toNumber(input.quoteSizeUsdc) ?? 1000,
+      minQueueMultiple: toNumber(input.minQueueMultiple) ?? 2,
+      competitivenessP90: toNumber(input.competitivenessP90),
       snapshotSource: source,
       snapshotHealth: "fresh",
       snapshotAgeMs: 0,
@@ -170,6 +178,8 @@ function normalizeOpportunityRow(value: unknown): OpportunityRow {
     eventTiming: normalizeEventTiming(input.eventTiming),
     timeToStartHuman: toStringValue(input.timeToStartHuman),
     rewardDailyRate: toNumber(input.rewardDailyRate) ?? 0,
+    rewardsMaxSpread: toNumber(input.rewardsMaxSpread) ?? 0,
+    rewardsMinSize: toNumber(input.rewardsMinSize) ?? 0,
     pricingZone: toStringValue(input.pricingZone),
     marketCompetitiveness: toNumber(input.marketCompetitiveness),
     spreadRatio: toNumber(input.spreadRatio),

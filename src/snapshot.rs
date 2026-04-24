@@ -43,6 +43,9 @@ pub struct SnapshotMeta {
     pub generated_at: String,
     pub scan_duration_ms: u64,
     pub source_version: String,
+    pub quote_size_usdc: Decimal,
+    pub min_queue_multiple: Decimal,
+    pub competitiveness_p90: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -104,6 +107,8 @@ pub struct SnapshotOpportunityRow {
     pub event_timing: EventTiming,
     pub time_to_start_human: Option<String>,
     pub reward_daily_rate: Decimal,
+    pub rewards_max_spread: Decimal,
+    pub rewards_min_size: Decimal,
     pub pricing_zone: Option<PricingZone>,
     pub market_competitiveness: Option<Decimal>,
     pub spread_ratio: Option<Decimal>,
@@ -122,24 +127,13 @@ struct MarketUiMetadata {
     reference_start_time: Option<DateTime<Utc>>,
 }
 
-fn build_polymarket_market_url(event_slug: Option<&str>, market_slug: Option<&str>) -> Option<String> {
-    event_slug
-        .or(market_slug)
-        .map(str::trim)
-        .filter(|slug| !slug.is_empty())
-        .map(|slug| format!("https://polymarket.com/event/{slug}"))
-}
-
 pub async fn build_snapshot(
     client: &PolymarketClient,
     config: &SnapshotBuildConfig,
 ) -> Result<Snapshot> {
     let started_at = Instant::now();
     let generated_started_at = Utc::now();
-    let source_version = format!(
-        "polymarket-lp-reward-scanner/{}",
-        env!("CARGO_PKG_VERSION")
-    );
+    let source_version = format!("polymarket-lp-reward-scanner/{}", env!("CARGO_PKG_VERSION"));
 
     let rewards = client.fetch_current_rewards_all().await?;
     let unique_condition_ids: Vec<_> = rewards
@@ -333,6 +327,9 @@ pub async fn build_snapshot(
             generated_at: generated_at.to_rfc3339(),
             scan_duration_ms: started_at.elapsed().as_millis() as u64,
             source_version,
+            quote_size_usdc: config.quote_size_usdc,
+            min_queue_multiple: config.min_queue_multiple,
+            competitiveness_p90,
         },
         available_tags: collect_available_tags(&markets),
         dashboard: DashboardSnapshot {
@@ -368,6 +365,18 @@ fn build_dashboard_rows(
                             .map(|market| market.question.clone())
                             .unwrap_or_else(|| reward.condition_id.to_string())
                     }),
+                market_url: market
+                    .and_then(|market| {
+                        build_polymarket_market_url(
+                            market.event_slug.as_deref(),
+                            market.market_slug.as_deref(),
+                        )
+                    })
+                    .or_else(|| {
+                        detail.and_then(|detail| {
+                            build_polymarket_market_url(None, detail.market_slug.as_deref())
+                        })
+                    }),
                 event_start_time: display_time.map(|value| value.to_rfc3339()),
                 reward_daily_rate: reward.reward_daily_rate,
                 rewards_max_spread: detail
@@ -384,12 +393,7 @@ fn build_dashboard_rows(
             SnapshotDashboardRow {
                 market_id: row.market_id,
                 question: row.question,
-                market_url: build_polymarket_market_url(
-                    market.and_then(|market| market.event_slug.as_deref()),
-                    detail
-                        .and_then(|detail| detail.market_slug.as_deref())
-                        .or_else(|| market.and_then(|market| market.slug.as_deref())),
-                ),
+                market_url: row.market_url,
                 image: market.and_then(|market| market.image.clone()),
                 tags: market.map(flatten_tags).unwrap_or_default(),
                 event_start_time: row.event_start_time,
@@ -434,6 +438,8 @@ fn build_opportunity_rows(
                 time_to_start_human: display_time
                     .map(|value| human_duration((value - now).num_seconds())),
                 reward_daily_rate: opportunity.reward_daily_rate,
+                rewards_max_spread: opportunity.rewards_max_spread,
+                rewards_min_size: opportunity.rewards_min_size,
                 pricing_zone: opportunity.pricing_zone,
                 market_competitiveness: opportunity.market_competitiveness,
                 spread_ratio: opportunity.spread_ratio,
@@ -458,7 +464,7 @@ fn build_market_metadata_map(
                 MarketUiMetadata {
                     market_url: build_polymarket_market_url(
                         market.event_slug.as_deref(),
-                        market.slug.as_deref(),
+                        market.market_slug.as_deref(),
                     ),
                     image: market.image.clone(),
                     tags: flatten_tags(market),
@@ -488,6 +494,21 @@ fn flatten_tags(market: &MarketSnapshot) -> Vec<String> {
         .collect()
 }
 
+fn build_polymarket_market_url(
+    event_slug: Option<&str>,
+    market_slug: Option<&str>,
+) -> Option<String> {
+    let slug = event_slug
+        .and_then(normalize_slug)
+        .or_else(|| market_slug.and_then(normalize_slug))?;
+    Some(format!("https://polymarket.com/event/{slug}"))
+}
+
+fn normalize_slug(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then_some(trimmed)
+}
+
 fn collect_available_tags(markets: &HashMap<B256, MarketSnapshot>) -> Vec<String> {
     let mut tags: Vec<_> = markets
         .values()
@@ -515,7 +536,7 @@ mod tests {
 
     use super::{
         build_opportunity_rows, build_polymarket_market_url, classify_event_timing, EventTiming,
-        MarketUiMetadata,
+        MarketUiMetadata, SnapshotMeta, SnapshotOpportunityRow,
     };
     use crate::models::{
         LiquidityInfo, Opportunity, OpportunityReason, OpportunityStatus, PricingZone,
@@ -557,6 +578,8 @@ mod tests {
             time_to_start_seconds: 86_400,
             time_to_start_human: "1d 0h".to_string(),
             reward_daily_rate: dec!(5),
+            rewards_max_spread: dec!(3.5),
+            rewards_min_size: dec!(50),
             pricing_zone: Some(PricingZone::Neutral),
             market_competitiveness: Some(dec!(1)),
             spread_ratio: Some(dec!(0.5)),
@@ -586,7 +609,7 @@ mod tests {
                 B256::ZERO.to_string(),
                 MarketUiMetadata {
                     market_url: Some(
-                        "https://polymarket.com/event/question-market".to_string(),
+                        "https://polymarket.com/event/question-event".to_string(),
                     ),
                     image: Some("https://example.com/image.png".to_string()),
                     tags: vec!["Energy".to_string()],
@@ -600,17 +623,71 @@ mod tests {
 
         assert_eq!(rows[0].event_timing, EventTiming::Started);
         assert_eq!(rows[0].time_to_start_human.as_deref(), Some("started"));
+        assert_eq!(
+            rows[0].market_url.as_deref(),
+            Some("https://polymarket.com/event/question-event")
+        );
     }
 
     #[test]
     fn market_url_prefers_event_slug_over_market_slug() {
         assert_eq!(
-            build_polymarket_market_url(Some("event-slug"), Some("market-slug")).as_deref(),
-            Some("https://polymarket.com/event/event-slug")
+            build_polymarket_market_url(
+                Some("which-company-has-the-best-ai-model-end-of-april"),
+                Some("will-anthropic-have-the-best-ai-model-at-the-end-of-april-2026"),
+            )
+            .as_deref(),
+            Some("https://polymarket.com/event/which-company-has-the-best-ai-model-end-of-april")
+        );
+    }
+
+    #[test]
+    fn snapshot_serialization_includes_quote_size_and_reward_rules() {
+        let meta = SnapshotMeta {
+            generated_at: "2026-04-23T08:00:00Z".to_string(),
+            scan_duration_ms: 1000,
+            source_version: "polymarket-lp-reward-scanner/test".to_string(),
+            quote_size_usdc: dec!(1000),
+            min_queue_multiple: dec!(2),
+            competitiveness_p90: Some(dec!(1.5)),
+        };
+        let row = SnapshotOpportunityRow {
+            market_id: B256::ZERO.to_string(),
+            question: "Question".to_string(),
+            market_url: Some("https://polymarket.com/event/question-event".to_string()),
+            image: None,
+            tags: vec!["AI".to_string()],
+            side_to_trade: "Yes".to_string(),
+            token_id: U256::from(1u64).to_string(),
+            status: OpportunityStatus::CandidateNow,
+            reason: OpportunityReason::InBand,
+            event_start_time: Some("2026-04-24T08:00:00Z".to_string()),
+            event_timing: EventTiming::Upcoming,
+            time_to_start_human: Some("1d 0h".to_string()),
+            reward_daily_rate: dec!(5),
+            rewards_max_spread: dec!(3.5),
+            rewards_min_size: dec!(50),
+            pricing_zone: Some(PricingZone::Neutral),
+            market_competitiveness: Some(dec!(1)),
+            spread_ratio: Some(dec!(0.5)),
+            apr_ceiling: Some(dec!(100)),
+            raw_apr: Some(dec!(25)),
+            effective_apr: Some(dec!(8.33)),
+            suggested_price: Some(dec!(0.48)),
+            queue_multiple: Some(dec!(2.5)),
+        };
+
+        let meta_json = serde_json::to_value(meta).unwrap();
+        let row_json = serde_json::to_value(row).unwrap();
+
+        assert_eq!(meta_json.get("quoteSizeUsdc").and_then(|value| value.as_str()), Some("1000"));
+        assert_eq!(
+            row_json.get("rewardsMaxSpread").and_then(|value| value.as_str()),
+            Some("3.5")
         );
         assert_eq!(
-            build_polymarket_market_url(None, Some("market-slug")).as_deref(),
-            Some("https://polymarket.com/event/market-slug")
+            row_json.get("rewardsMinSize").and_then(|value| value.as_str()),
+            Some("50")
         );
     }
 }

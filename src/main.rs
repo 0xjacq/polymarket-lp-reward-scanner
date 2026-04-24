@@ -110,6 +110,7 @@ async fn main() -> Result<()> {
                     question: detail
                         .and_then(|detail| detail.question.clone())
                         .unwrap_or_else(|| reward.condition_id.to_string()),
+                    market_url: None,
                     event_start_time: None,
                     reward_daily_rate: reward.reward_daily_rate,
                     rewards_max_spread: detail

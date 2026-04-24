@@ -3,6 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type {
+  DetailMode,
+  OpportunityDetailPayload
+} from "@/lib/opportunity-detail";
+import type {
   EventTiming,
   OpportunityRow,
   ScannerResponse
@@ -22,8 +26,16 @@ type ScannerSort =
   | "queueMultiple"
   | "spreadRatio";
 
+type DetailState = {
+  key: string | null;
+  loading: boolean;
+  error: string | null;
+  data: OpportunityDetailPayload | null;
+};
+
 const REFRESH_MS = 30_000;
 const COUNTDOWN_TICK_MS = 30_000;
+const DETAIL_DEBOUNCE_MS = 300;
 
 function formatNumber(value: number | null, fractionDigits = 0) {
   if (value === null) {
@@ -60,6 +72,22 @@ function formatMultiple(value: number | null) {
   return `${formatNumber(value, 2)}x`;
 }
 
+function formatPrice(value: number | null) {
+  if (value === null) {
+    return "-";
+  }
+
+  return formatNumber(value, 3);
+}
+
+function formatShares(value: number | null) {
+  if (value === null) {
+    return "-";
+  }
+
+  return formatNumber(value, 0);
+}
+
 function formatTimestamp(value: string | null) {
   if (!value) {
     return "-";
@@ -89,20 +117,13 @@ function formatDurationFromMs(value: number | null) {
 
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
-  return `${hours}h ${remainingMinutes}m`;
-}
-
-function formatLiveTimeToStart(eventStartTime: string | null, fallback: string | null, nowMs: number) {
-  if (!eventStartTime) {
-    return fallback ?? "-";
+  if (hours < 24) {
+    return `${hours}h ${remainingMinutes}m`;
   }
 
-  const eventMs = new Date(eventStartTime).getTime();
-  if (Number.isNaN(eventMs)) {
-    return fallback ?? "-";
-  }
-
-  return formatDurationFromMs(eventMs - nowMs);
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  return `${days}d ${remainingHours}h`;
 }
 
 function humanize(value: string) {
@@ -136,6 +157,29 @@ function matchesSearch(query: string, values: string[]) {
   return values.some((value) => value.toLowerCase().includes(query));
 }
 
+function parsePositiveNumber(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function rowKey(row: OpportunityRow, mode: DetailMode) {
+  return `${mode}:${row.marketId}:${row.tokenId}`;
+}
+
+function formatLiveTimeToStart(
+  eventStartTime: string | null,
+  fallback: string | null,
+  nowMs: number | null
+) {
+  if (!eventStartTime || nowMs === null) {
+    return fallback ?? "-";
+  }
+
+  return formatDurationFromMs(
+    Math.max(0, new Date(eventStartTime).getTime() - nowMs)
+  );
+}
+
 function FilterToggle({
   label,
   value,
@@ -158,15 +202,376 @@ function FilterToggle({
   );
 }
 
+function MetricCell({
+  label,
+  value
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function markerPosition(
+  value: number | null,
+  scaleMin: number,
+  scaleMax: number
+) {
+  if (value === null) {
+    return null;
+  }
+
+  if (scaleMax - scaleMin <= 0) {
+    return 50;
+  }
+
+  const position = ((value - scaleMin) / (scaleMax - scaleMin)) * 100;
+  return Math.max(0, Math.min(100, position));
+}
+
+function BandVisualization({ detail }: { detail: OpportunityDetailPayload }) {
+  const bandStart = markerPosition(
+    detail.rewardFloorPrice,
+    detail.depth.scaleMin,
+    detail.depth.scaleMax
+  );
+  const bandEnd = markerPosition(
+    detail.inBandUpperPrice,
+    detail.depth.scaleMin,
+    detail.depth.scaleMax
+  );
+  const markers = [
+    {
+      label: "Reward floor",
+      value: detail.rewardFloorPrice,
+      className: "marker-floor"
+    },
+    {
+      label: "Suggested",
+      value: detail.suggestedPrice,
+      className: "marker-suggested"
+    },
+    {
+      label: "Best bid",
+      value: detail.bestBid,
+      className: "marker-bid"
+    },
+    {
+      label: "Midpoint",
+      value: detail.adjustedMidpoint,
+      className: "marker-midpoint"
+    },
+    {
+      label: "Best ask",
+      value: detail.bestAsk,
+      className: "marker-ask"
+    }
+  ]
+    .map((marker) => ({
+      ...marker,
+      position: markerPosition(
+        marker.value,
+        detail.depth.scaleMin,
+        detail.depth.scaleMax
+      )
+    }))
+    .filter(
+      (
+        marker
+      ): marker is typeof marker & {
+        position: number;
+      } => marker.position !== null
+    );
+
+  return (
+    <div className="lp-chart">
+      <div className="lp-chart-track">
+        {bandStart !== null && bandEnd !== null && bandEnd > bandStart ? (
+          <div
+            className="lp-band"
+            style={{
+              left: `${bandStart}%`,
+              width: `${bandEnd - bandStart}%`
+            }}
+          />
+        ) : null}
+
+        {markers.map((marker) => (
+          <div
+            key={marker.label}
+            className={`lp-marker ${marker.className}`}
+            style={{ left: `${marker.position}%` }}
+          >
+            <span />
+            <small>{marker.label}</small>
+          </div>
+        ))}
+      </div>
+
+      <div className="lp-scale">
+        <span>{formatPrice(detail.depth.scaleMin)}</span>
+        <span>{formatPrice(detail.depth.scaleMax)}</span>
+      </div>
+    </div>
+  );
+}
+
+function DepthVisualization({ detail }: { detail: OpportunityDetailPayload }) {
+  const maxSize = Math.max(
+    1,
+    ...detail.depth.bids.map((level) => level.size)
+  );
+
+  return (
+    <div className="depth-table">
+      {detail.depth.bids.length === 0 ? (
+        <p className="detail-empty">No live bid depth was returned.</p>
+      ) : (
+        detail.depth.bids.map((level) => (
+          <div
+            key={`${level.price}-${level.cumulativeShares}`}
+            className={
+              level.isSuggested
+                ? "depth-row is-suggested"
+                : level.inBand
+                  ? "depth-row is-in-band"
+                  : "depth-row"
+            }
+          >
+            <div className="depth-price">{formatPrice(level.price)}</div>
+            <div className="depth-bar-shell">
+              <div
+                className="depth-bar"
+                style={{ width: `${(level.size / maxSize) * 100}%` }}
+              />
+            </div>
+            <div className="depth-size">{formatShares(level.size)}</div>
+            <div className="depth-queue">
+              {level.queueAheadShares > 0
+                ? formatShares(level.queueAheadShares)
+                : "-"}
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+function LPDetailsPanel({
+  row,
+  detail,
+  error,
+  loading,
+  quoteSizeInput,
+  onQuoteSizeChange,
+  defaultQuoteSize
+}: {
+  row: OpportunityRow;
+  detail: OpportunityDetailPayload | null;
+  error: string | null;
+  loading: boolean;
+  quoteSizeInput: string;
+  onQuoteSizeChange: (value: string) => void;
+  defaultQuoteSize: number;
+}) {
+  return (
+    <section className="lp-panel">
+      <div className="lp-panel-toolbar">
+        <label className="control lp-quote-control">
+          <span>Quote size (USDC)</span>
+          <input
+            inputMode="decimal"
+            value={quoteSizeInput}
+            onChange={(event) => onQuoteSizeChange(event.target.value)}
+            placeholder={String(defaultQuoteSize)}
+          />
+        </label>
+
+        <div className="lp-panel-copy">
+          <span>Side</span>
+          <strong>{row.sideToTrade}</strong>
+        </div>
+
+        <div className="lp-panel-copy">
+          <span>Live status</span>
+          <strong>{loading ? "Refreshing live book..." : "Live book ready"}</strong>
+        </div>
+      </div>
+
+      {error ? <p className="error-banner panel-banner">{error}</p> : null}
+
+      {detail ? (
+        <>
+          <p className="panel-note">
+            Live book fetched {formatTimestamp(detail.fetchedAt)}. Ranked snapshot was
+            published {formatTimestamp(detail.snapshotGeneratedAt)}.
+          </p>
+
+          <BandVisualization detail={detail} />
+
+          <div className="detail-sections">
+            <section className="detail-card">
+              <h3>Live book</h3>
+              <div className="detail-grid">
+                <MetricCell label="Best bid" value={formatPrice(detail.bestBid)} />
+                <MetricCell label="Best ask" value={formatPrice(detail.bestAsk)} />
+                <MetricCell
+                  label="Adjusted midpoint"
+                  value={formatPrice(detail.adjustedMidpoint)}
+                />
+                <MetricCell
+                  label="Spread x"
+                  value={formatMultiple(detail.spreadRatio)}
+                />
+              </div>
+              <DepthVisualization detail={detail} />
+            </section>
+
+            <section className="detail-card">
+              <h3>Reward rules</h3>
+              <div className="detail-grid">
+                <MetricCell
+                  label="Reward / day"
+                  value={formatMoney(row.rewardDailyRate)}
+                />
+                <MetricCell
+                  label="Max spread"
+                  value={`${formatNumber(detail.rewardsMaxSpread, 2)}c`}
+                />
+                <MetricCell
+                  label="Min shares"
+                  value={formatShares(detail.rewardsMinSize)}
+                />
+                <MetricCell
+                  label="Eligible band"
+                  value={
+                    detail.rewardFloorPrice === null ||
+                    detail.inBandUpperPrice === null
+                      ? "-"
+                      : `${formatPrice(detail.rewardFloorPrice)} to ${formatPrice(
+                          detail.inBandUpperPrice
+                        )}`
+                  }
+                />
+              </div>
+            </section>
+
+            <section className="detail-card">
+              <h3>Your quote</h3>
+              <div className="detail-grid">
+                <MetricCell
+                  label="Suggested price"
+                  value={formatPrice(detail.suggestedPrice)}
+                />
+                <MetricCell label="Your shares" value={formatShares(detail.ownShares)} />
+                <MetricCell
+                  label="Min qualifying quote"
+                  value={formatMoney(detail.minimumQualifyingUsdc)}
+                />
+                <MetricCell
+                  label="Distance to ask"
+                  value={formatPrice(detail.distanceToAsk)}
+                />
+                <MetricCell
+                  label="Queue ahead"
+                  value={formatShares(detail.queueAheadShares)}
+                />
+                <MetricCell
+                  label="Queue ahead notional"
+                  value={formatMoney(detail.queueAheadNotional)}
+                />
+                <MetricCell
+                  label="Queue x"
+                  value={formatMultiple(detail.queueMultiple)}
+                />
+                <MetricCell
+                  label="Qualifying depth"
+                  value={formatShares(detail.qualifyingDepthShares)}
+                />
+              </div>
+            </section>
+
+            <section className="detail-card">
+              <h3>Estimated rewards</h3>
+              <div className="detail-grid">
+                <MetricCell
+                  label="APR ceiling"
+                  value={formatPercent(detail.aprCeiling)}
+                />
+                <MetricCell label="Raw APR" value={formatPercent(detail.rawApr)} />
+                <MetricCell
+                  label="Effective APR"
+                  value={formatPercent(detail.effectiveApr)}
+                />
+                <MetricCell
+                  label="Pricing zone"
+                  value={detail.pricingZone ? humanize(detail.pricingZone) : "-"}
+                />
+                <MetricCell
+                  label="Live status"
+                  value={humanize(detail.status)}
+                />
+                <MetricCell
+                  label="Live reason"
+                  value={humanize(detail.reason)}
+                />
+              </div>
+            </section>
+          </div>
+        </>
+      ) : loading ? (
+        <p className="info-banner panel-banner">Loading live LP diagnostics...</p>
+      ) : (
+        <p className="detail-empty">No live diagnostics available for this row.</p>
+      )}
+    </section>
+  );
+}
+
 function ScannerRowCard({
   row,
   displayedApr,
-  nowMs
+  timeToStart,
+  expanded,
+  onToggle,
+  detail,
+  detailError,
+  detailLoading,
+  quoteSizeInput,
+  onQuoteSizeChange,
+  defaultQuoteSize
 }: {
   row: OpportunityRow;
   displayedApr: number | null;
-  nowMs: number;
+  timeToStart: string;
+  expanded: boolean;
+  onToggle: () => void;
+  detail: OpportunityDetailPayload | null;
+  detailError: string | null;
+  detailLoading: boolean;
+  quoteSizeInput: string;
+  onQuoteSizeChange: (value: string) => void;
+  defaultQuoteSize: number;
 }) {
+  const question = row.marketUrl ? (
+    <a
+      className="market-link"
+      href={row.marketUrl}
+      rel="noreferrer"
+      target="_blank"
+    >
+      {row.question}
+    </a>
+  ) : (
+    row.question
+  );
+
   return (
     <article className="market-row">
       <div className="market-visual">
@@ -180,15 +585,7 @@ function ScannerRowCard({
       <div className="market-main">
         <div className="market-heading">
           <div className="heading-copy">
-            <h2>
-              {row.marketUrl ? (
-                <a className="market-title-link" href={row.marketUrl} rel="noreferrer" target="_blank">
-                  {row.question}
-                </a>
-              ) : (
-                row.question
-              )}
-            </h2>
+            <h2>{question}</h2>
             <p className="market-subhead">
               {row.sideToTrade} · {humanize(row.status)} · {humanize(row.reason)}
             </p>
@@ -202,47 +599,52 @@ function ScannerRowCard({
         </div>
 
         <div className="market-metrics scanner-metrics">
-          <div>
-            <span>Displayed APR</span>
-            <strong>{formatPercent(displayedApr)}</strong>
-          </div>
-          <div>
-            <span>Raw APR</span>
-            <strong>{formatPercent(row.rawApr)}</strong>
-          </div>
-          <div>
-            <span>Reward / day</span>
-            <strong>{formatMoney(row.rewardDailyRate)}</strong>
-          </div>
-          <div>
-            <span>Queue x</span>
-            <strong>{formatMultiple(row.queueMultiple)}</strong>
-          </div>
-          <div>
-            <span>Spread x</span>
-            <strong>{formatMultiple(row.spreadRatio)}</strong>
-          </div>
-          <div>
-            <span>Competitiveness</span>
-            <strong>{formatNumber(row.marketCompetitiveness, 2)}</strong>
-          </div>
-          <div>
-            <span>Event time</span>
-            <strong>{formatTimestamp(row.eventStartTime)}</strong>
-          </div>
-          <div>
-            <span>Time to start</span>
-            <strong>{formatLiveTimeToStart(row.eventStartTime, row.timeToStartHuman, nowMs)}</strong>
-          </div>
-          <div>
-            <span>Timing</span>
-            <strong>{humanize(row.eventTiming)}</strong>
-          </div>
-          <div>
-            <span>Suggested price</span>
-            <strong>{row.suggestedPrice === null ? "-" : `${formatNumber(row.suggestedPrice, 3)}`}</strong>
-          </div>
+          <MetricCell label="Displayed APR" value={formatPercent(displayedApr)} />
+          <MetricCell label="Raw APR" value={formatPercent(row.rawApr)} />
+          <MetricCell label="Reward / day" value={formatMoney(row.rewardDailyRate)} />
+          <MetricCell label="Queue x" value={formatMultiple(row.queueMultiple)} />
+          <MetricCell label="Spread x" value={formatMultiple(row.spreadRatio)} />
+          <MetricCell
+            label="Competitiveness"
+            value={formatNumber(row.marketCompetitiveness, 2)}
+          />
+          <MetricCell label="Event time" value={formatTimestamp(row.eventStartTime)} />
+          <MetricCell label="Time to start" value={timeToStart} />
+          <MetricCell label="Timing" value={humanize(row.eventTiming)} />
+          <MetricCell label="Suggested price" value={formatPrice(row.suggestedPrice)} />
         </div>
+
+        <div className="market-actions">
+          <button
+            className={expanded ? "detail-button active" : "detail-button"}
+            onClick={onToggle}
+            type="button"
+          >
+            {expanded ? "Hide LP details" : "LP details"}
+          </button>
+          {row.marketUrl ? (
+            <a
+              className="market-open-link"
+              href={row.marketUrl}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Open on Polymarket
+            </a>
+          ) : null}
+        </div>
+
+        {expanded ? (
+          <LPDetailsPanel
+            row={row}
+            detail={detail}
+            error={detailError}
+            loading={detailLoading}
+            quoteSizeInput={quoteSizeInput}
+            onQuoteSizeChange={onQuoteSizeChange}
+            defaultQuoteSize={defaultQuoteSize}
+          />
+        ) : null}
       </div>
     </article>
   );
@@ -255,7 +657,7 @@ export function LiveDashboard({
   const [scanner, setScanner] = useState<ScannerResponse | null>(initialScanner);
   const [error, setError] = useState<string | null>(initialError);
   const [loading, setLoading] = useState(initialScanner === null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [countdownNowMs, setCountdownNowMs] = useState<number | null>(null);
 
   const [scannerSearch, setScannerSearch] = useState("");
   const [scannerTiming, setScannerTiming] = useState<TimingFilter>("upcoming");
@@ -265,32 +667,54 @@ export function LiveDashboard({
   const [twoSided, setTwoSided] = useState(false);
   const [scannerSort, setScannerSort] = useState<ScannerSort>("effectiveApr");
 
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [quoteSizeInput, setQuoteSizeInput] = useState("");
+  const [detailState, setDetailState] = useState<DetailState>({
+    key: null,
+    loading: false,
+    error: null,
+    data: null
+  });
+
   useEffect(() => {
     setScannerSort(twoSided ? "rawApr" : "effectiveApr");
+    setExpandedKey(null);
+    setDetailState({ key: null, loading: false, error: null, data: null });
   }, [twoSided]);
+
+  useEffect(() => {
+    setCountdownNowMs(Date.now());
+    const interval = window.setInterval(
+      () => setCountdownNowMs(Date.now()),
+      COUNTDOWN_TICK_MS
+    );
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadData() {
       try {
-        const scannerResult = await fetch("/api/scanner", { cache: "no-store" }).then(async (response) => {
-          const payload = (await response.json()) as ScannerResponse & { error?: string };
-          if (!response.ok) {
-            throw new Error(payload.error ?? "Scanner request failed");
-          }
-          return payload;
-        });
-
-        if (cancelled) {
-          return;
+        const response = await fetch("/api/scanner", { cache: "no-store" });
+        const payload = (await response.json()) as ScannerResponse & {
+          error?: string;
+        };
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Scanner request failed");
         }
 
-        setScanner(scannerResult);
-        setError(null);
-      } catch (refreshError) {
         if (!cancelled) {
-          setError(refreshError instanceof Error ? refreshError.message : "Scanner refresh failed");
+          setScanner(payload);
+          setError(null);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : "Scanner refresh failed"
+          );
         }
       } finally {
         if (!cancelled) {
@@ -308,21 +732,15 @@ export function LiveDashboard({
     };
   }, []);
 
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      setNowMs(Date.now());
-    }, COUNTDOWN_TICK_MS);
-
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, []);
-
   const meta = scanner?.meta ?? null;
   const availableTags = scanner?.availableTags ?? [];
-  const activeScannerRows = twoSided ? scanner?.twoSided.rows ?? [] : scanner?.singleSided.rows ?? [];
+  const activeScannerRows = twoSided
+    ? scanner?.twoSided.rows ?? []
+    : scanner?.singleSided.rows ?? [];
+  const detailMode: DetailMode = twoSided ? "two" : "single";
+  const defaultQuoteSize = meta?.quoteSizeUsdc ?? 1000;
+  const parsedQuoteSize = parsePositiveNumber(quoteSizeInput) ?? defaultQuoteSize;
   const isStale = meta?.snapshotHealth === "stale";
-  const staleMessage = meta?.warning ?? null;
   const hasAnyData =
     (scanner?.singleSided.rows.length ?? 0) > 0 ||
     (scanner?.twoSided.rows.length ?? 0) > 0;
@@ -392,7 +810,101 @@ export function LiveDashboard({
     });
 
     return rows.slice(0, scannerRows);
-  }, [activeScannerRows, minApr, scannerRows, scannerSearch, scannerSort, scannerTag, scannerTiming, twoSided]);
+  }, [
+    activeScannerRows,
+    minApr,
+    scannerRows,
+    scannerSearch,
+    scannerSort,
+    scannerTag,
+    scannerTiming,
+    twoSided
+  ]);
+
+  useEffect(() => {
+    if (
+      expandedKey &&
+      !filteredScannerRows.some((row) => rowKey(row, detailMode) === expandedKey)
+    ) {
+      setExpandedKey(null);
+      setDetailState({ key: null, loading: false, error: null, data: null });
+    }
+  }, [detailMode, expandedKey, filteredScannerRows]);
+
+  const expandedRow =
+    expandedKey === null
+      ? null
+      : filteredScannerRows.find((row) => rowKey(row, detailMode) === expandedKey) ??
+        null;
+
+  useEffect(() => {
+    if (!expandedRow || !meta) {
+      setDetailState({ key: null, loading: false, error: null, data: null });
+      return;
+    }
+
+    const requestKey = rowKey(expandedRow, detailMode);
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        setDetailState((current) => ({
+          key: requestKey,
+          loading: true,
+          error: null,
+          data: current.key === requestKey ? current.data : null
+        }));
+
+        const params = new URLSearchParams({
+          marketId: expandedRow.marketId,
+          tokenId: expandedRow.tokenId,
+          mode: detailMode,
+          quoteSizeUsdc: String(parsedQuoteSize)
+        });
+        const response = await fetch(`/api/opportunity-detail?${params.toString()}`, {
+          cache: "no-store",
+          signal: controller.signal
+        });
+        const payload = (await response.json()) as OpportunityDetailPayload & {
+          error?: string;
+        };
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Opportunity detail request failed");
+        }
+
+        setDetailState({
+          key: requestKey,
+          loading: false,
+          error: null,
+          data: payload
+        });
+      } catch (detailError) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setDetailState((current) => ({
+          key: requestKey,
+          loading: false,
+          error:
+            detailError instanceof Error
+              ? detailError.message
+              : "Opportunity detail request failed",
+          data: current.key === requestKey ? current.data : null
+        }));
+      }
+    }, DETAIL_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [detailMode, expandedRow, meta, parsedQuoteSize]);
+
+  const staleMessage = meta?.warning
+    ? `Snapshot published ${formatTimestamp(meta.generatedAt)} (${formatDurationFromMs(
+        meta.snapshotAgeMs
+      )} old). Source: ${humanize(meta.snapshotSource)}. ${meta.warning}`
+    : null;
 
   return (
     <main className="app-shell">
@@ -401,16 +913,15 @@ export function LiveDashboard({
           <p className="eyebrow">Polymarket reward snapshot</p>
           <h1>Opportunities</h1>
           <p className="subtle">
-            Browser refreshes every 30 seconds. Time to start updates live from event time.
+            Ranked from the latest Rust snapshot. The browser refreshes every 30
+            seconds; published data is on a five-minute cadence.
           </p>
         </div>
       </section>
 
       {staleMessage ? (
         <p className={isStale ? "warning-banner" : "info-banner"}>
-          {meta
-            ? `Snapshot published ${formatTimestamp(meta.generatedAt)}. ${staleMessage}`
-            : staleMessage}
+          {staleMessage}
         </p>
       ) : null}
 
@@ -427,7 +938,10 @@ export function LiveDashboard({
 
           <label className="control">
             <span>Tag</span>
-            <select value={scannerTag} onChange={(event) => setScannerTag(event.target.value)}>
+            <select
+              value={scannerTag}
+              onChange={(event) => setScannerTag(event.target.value)}
+            >
               <option value="">All tags</option>
               {availableTags.map((tag) => (
                 <option key={tag} value={tag}>
@@ -449,7 +963,10 @@ export function LiveDashboard({
 
           <label className="control">
             <span>Sort</span>
-            <select value={scannerSort} onChange={(event) => setScannerSort(event.target.value as ScannerSort)}>
+            <select
+              value={scannerSort}
+              onChange={(event) => setScannerSort(event.target.value as ScannerSort)}
+            >
               <option value={twoSided ? "rawApr" : "effectiveApr"}>
                 {twoSided ? "Raw APR" : "Effective APR"}
               </option>
@@ -462,7 +979,10 @@ export function LiveDashboard({
 
           <label className="control control-select">
             <span>Rows</span>
-            <select value={scannerRows} onChange={(event) => setScannerRows(Number(event.target.value))}>
+            <select
+              value={scannerRows}
+              onChange={(event) => setScannerRows(Number(event.target.value))}
+            >
               <option value={20}>20</option>
               <option value={40}>40</option>
               <option value={80}>80</option>
@@ -474,15 +994,40 @@ export function LiveDashboard({
         <div className="toggle-row">
           <div className="toggle-group">
             <span>Timing</span>
-            <FilterToggle label="Upcoming" value="upcoming" active={scannerTiming === "upcoming"} onClick={(value) => setScannerTiming(value as TimingFilter)} />
-            <FilterToggle label="Started" value="started" active={scannerTiming === "started"} onClick={(value) => setScannerTiming(value as TimingFilter)} />
-            <FilterToggle label="All" value="all" active={scannerTiming === "all"} onClick={(value) => setScannerTiming(value as TimingFilter)} />
+            <FilterToggle
+              label="Upcoming"
+              value="upcoming"
+              active={scannerTiming === "upcoming"}
+              onClick={(value) => setScannerTiming(value as TimingFilter)}
+            />
+            <FilterToggle
+              label="Started"
+              value="started"
+              active={scannerTiming === "started"}
+              onClick={(value) => setScannerTiming(value as TimingFilter)}
+            />
+            <FilterToggle
+              label="All"
+              value="all"
+              active={scannerTiming === "all"}
+              onClick={(value) => setScannerTiming(value as TimingFilter)}
+            />
           </div>
 
           <div className="toggle-group">
             <span>Mode</span>
-            <FilterToggle label="Single-sided" value="single" active={!twoSided} onClick={() => setTwoSided(false)} />
-            <FilterToggle label="Two-sided" value="two" active={twoSided} onClick={() => setTwoSided(true)} />
+            <FilterToggle
+              label="Single-sided"
+              value="single"
+              active={!twoSided}
+              onClick={() => setTwoSided(false)}
+            />
+            <FilterToggle
+              label="Two-sided"
+              value="two"
+              active={twoSided}
+              onClick={() => setTwoSided(true)}
+            />
           </div>
         </div>
       </section>
@@ -494,17 +1039,51 @@ export function LiveDashboard({
       ) : null}
 
       <section className="market-list" aria-live="polite">
-        {filteredScannerRows.map((row) => (
+        {filteredScannerRows.map((row) => {
+          const key = rowKey(row, detailMode);
+          const expanded = expandedKey === key;
+          return (
             <ScannerRowCard
-              key={`${row.marketId}-${row.tokenId}`}
+              key={key}
               row={row}
               displayedApr={twoSided ? row.rawApr : row.effectiveApr}
-              nowMs={nowMs}
+              timeToStart={formatLiveTimeToStart(
+                row.eventStartTime,
+                row.timeToStartHuman,
+                countdownNowMs
+              )}
+              expanded={expanded}
+              onToggle={() => {
+                if (expanded) {
+                  setExpandedKey(null);
+                  setDetailState({
+                    key: null,
+                    loading: false,
+                    error: null,
+                    data: null
+                  });
+                  return;
+                }
+
+                setExpandedKey(key);
+                setQuoteSizeInput(String(defaultQuoteSize));
+              }}
+              detail={expanded ? detailState.data : null}
+              detailError={expanded ? detailState.error : null}
+              detailLoading={
+                expanded &&
+                detailState.key === key &&
+                detailState.loading
+              }
+              quoteSizeInput={quoteSizeInput}
+              onQuoteSizeChange={setQuoteSizeInput}
+              defaultQuoteSize={defaultQuoteSize}
             />
-        ))}
+          );
+        })}
 
         {!loading && !error && filteredScannerRows.length === 0 ? (
-          <p className="empty-state">No scanner rows match the current filters.</p>
+          <p className="empty-state">No opportunity rows match the current filters.</p>
         ) : null}
       </section>
     </main>

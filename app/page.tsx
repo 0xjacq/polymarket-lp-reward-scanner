@@ -6,18 +6,9 @@ export const dynamic = "force-dynamic";
 export default async function Page() {
   try {
     const initialScanner = await getScannerData();
-    return (
-      <LiveDashboard
-        initialScanner={initialScanner}
-      />
-    );
+    return <LiveDashboard initialScanner={initialScanner} />;
   } catch (error) {
     const message = formatSnapshotError(error);
-    return (
-      <LiveDashboard
-        initialScanner={null}
-        initialError={message}
-      />
-    );
+    return <LiveDashboard initialScanner={null} initialError={message} />;
   }
 }

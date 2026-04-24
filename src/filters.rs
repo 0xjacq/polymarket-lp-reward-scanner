@@ -150,9 +150,9 @@ mod tests {
         MarketSnapshot {
             condition_id: B256::ZERO,
             question: "Question".to_string(),
-            slug: Some("question-market".to_string()),
-            event_slug: Some("question-event".to_string()),
             image: None,
+            market_slug: Some("question-market".to_string()),
+            event_slug: Some("question-event".to_string()),
             tags: vec![MarketTag {
                 slug: Some("nba".to_string()),
                 label: Some("NBA".to_string()),

@@ -19,6 +19,8 @@ struct TokenDecision {
     reason: OpportunityReason,
     event_start_time: DateTime<Utc>,
     reward_daily_rate: Decimal,
+    rewards_max_spread: Decimal,
+    rewards_min_size: Decimal,
     pricing_zone: Option<PricingZone>,
     market_competitiveness: Option<Decimal>,
     spread_ratio: Option<Decimal>,
@@ -123,6 +125,8 @@ fn inspect_token(
         reason: OpportunityReason::MissingBookData,
         event_start_time: eligible.event_start_time,
         reward_daily_rate: eligible.reward.reward_daily_rate,
+        rewards_max_spread: eligible.reward.rewards_max_spread,
+        rewards_min_size: eligible.reward.rewards_min_size,
         pricing_zone: None,
         market_competitiveness,
         spread_ratio: None,
@@ -627,6 +631,8 @@ fn to_opportunity(candidate: TokenDecision) -> Opportunity {
         time_to_start_seconds,
         time_to_start_human: human_duration(time_to_start_seconds),
         reward_daily_rate: candidate.reward_daily_rate,
+        rewards_max_spread: candidate.rewards_max_spread,
+        rewards_min_size: candidate.rewards_min_size,
         pricing_zone: candidate.pricing_zone,
         market_competitiveness: candidate.market_competitiveness,
         spread_ratio: candidate.spread_ratio,
@@ -682,9 +688,9 @@ mod tests {
             market: MarketSnapshot {
                 condition_id: B256::ZERO,
                 question: "Question".to_string(),
-                slug: Some("question-market".to_string()),
-                event_slug: Some("question-event".to_string()),
                 image: None,
+                market_slug: Some("question-market".to_string()),
+                event_slug: Some("question-event".to_string()),
                 tags: Vec::new(),
                 tokens: vec![
                     OutcomeToken {

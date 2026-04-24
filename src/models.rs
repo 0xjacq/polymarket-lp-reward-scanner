@@ -36,9 +36,9 @@ pub struct EventSummary {
 pub struct MarketSnapshot {
     pub condition_id: B256,
     pub question: String,
-    pub slug: Option<String>,
-    pub event_slug: Option<String>,
     pub image: Option<String>,
+    pub market_slug: Option<String>,
+    pub event_slug: Option<String>,
     pub tags: Vec<MarketTag>,
     pub tokens: Vec<OutcomeToken>,
     pub active: Option<bool>,
@@ -138,6 +138,8 @@ pub struct Opportunity {
     pub time_to_start_seconds: i64,
     pub time_to_start_human: String,
     pub reward_daily_rate: Decimal,
+    pub rewards_max_spread: Decimal,
+    pub rewards_min_size: Decimal,
     pub pricing_zone: Option<PricingZone>,
     pub market_competitiveness: Option<Decimal>,
     pub spread_ratio: Option<Decimal>,
@@ -152,6 +154,7 @@ pub struct Opportunity {
 pub struct DashboardRow {
     pub market_id: String,
     pub question: String,
+    pub market_url: Option<String>,
     pub event_start_time: Option<String>,
     pub reward_daily_rate: Decimal,
     pub rewards_max_spread: Decimal,
