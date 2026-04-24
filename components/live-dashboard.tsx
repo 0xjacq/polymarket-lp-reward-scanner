@@ -101,11 +101,19 @@ function formatTimestamp(value: string | null) {
     return "-";
   }
 
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+
   return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
     timeZoneName: "short"
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function formatRewardDate(value: string | null) {
@@ -236,7 +244,7 @@ function MetricCell({
   return (
     <div>
       <span>{label}</span>
-      <strong>{value}</strong>
+      <strong suppressHydrationWarning>{value}</strong>
     </div>
   );
 }
