@@ -458,6 +458,7 @@ function LPDetailsPanel({
 }) {
   const recommendation = detail?.recommendation ?? null;
   const action = recommendation?.action ?? "do_not_place";
+  const isReducedSize = recommendation?.isReducedSize ?? false;
 
   return (
     <section className="lp-panel">
@@ -498,6 +499,10 @@ function LPDetailsPanel({
 
             <div className="recommendation-metrics">
               <div className="recommendation-metric">
+                <span>Suggested size</span>
+                <strong>{formatMoney(recommendation?.notional ?? null)}</strong>
+              </div>
+              <div className="recommendation-metric">
                 <span>Estimated APR</span>
                 <strong>{formatPercent(recommendation?.estimatedApr ?? null)}</strong>
               </div>
@@ -518,9 +523,13 @@ function LPDetailsPanel({
 
           <section className="order-ticket">
             <div>
-              <h3>Order to place</h3>
+              <h3>{isReducedSize ? "Smaller order to consider" : "Order to place"}</h3>
               <p className="panel-note">
-                Keep the order open only while it remains inside the reward band.
+                {isReducedSize
+                  ? `Your ${formatMoney(
+                      recommendation?.requestedNotional ?? null
+                    )} quote is too large for the current queue. This smaller size targets the queue rule now.`
+                  : "Keep the order open only while it remains inside the reward band."}
               </p>
             </div>
             <div className="ticket-grid">
@@ -537,7 +546,7 @@ function LPDetailsPanel({
                 <strong>{formatShares(recommendation?.shares ?? null)}</strong>
               </div>
               <div className="ticket-row">
-                <span>Estimated cost</span>
+                <span>{isReducedSize ? "Suggested cost" : "Estimated cost"}</span>
                 <strong>{formatMoney(recommendation?.notional ?? null)}</strong>
               </div>
             </div>
@@ -597,6 +606,10 @@ function LPDetailsPanel({
               <MetricCell
                 label="Queue x"
                 value={formatMultiple(detail.queueMultiple)}
+              />
+              <MetricCell
+                label="Max current size"
+                value={formatMoney(recommendation?.queueSupportedNotional ?? null)}
               />
               <MetricCell
                 label="Min qualifying cost"

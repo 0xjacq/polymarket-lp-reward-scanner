@@ -83,7 +83,10 @@ export type OpportunityRecommendation = {
   orderSide: string;
   limitPrice: number | null;
   shares: number | null;
+  requestedNotional: number;
   notional: number;
+  queueSupportedNotional: number | null;
+  isReducedSize: boolean;
   estimatedApr: number | null;
   estimatedRewardPerDay: number | null;
   estimatedRewardUntilEnd: number | null;
@@ -334,12 +337,36 @@ function recommendationReason(input: {
   quoteSizeUsdc: number;
   queueMultiple: number | null;
   minQueueMultiple: number;
+  queueSupportedNotional: number | null;
+  suggestedNotional: number;
+  minimumQualifyingUsdc: number | null;
+  canSuggestReducedSize: boolean;
 }) {
-  const { status, reason, quoteSizeUsdc, queueMultiple, minQueueMultiple } = input;
+  const {
+    status,
+    reason,
+    quoteSizeUsdc,
+    queueMultiple,
+    minQueueMultiple,
+    queueSupportedNotional,
+    suggestedNotional,
+    minimumQualifyingUsdc,
+    canSuggestReducedSize
+  } = input;
   if (status === "candidate_now") {
     return "Inside the reward band with enough queue ahead at the current book.";
   }
   if (reason === "queue_too_thin") {
+    if (canSuggestReducedSize && queueSupportedNotional !== null) {
+      return `Queue is too thin for $${formatCurrencyInput(quoteSizeUsdc)}. Use about $${formatCurrencyInput(suggestedNotional)} at the suggested price, or wait for more queue.`;
+    }
+    if (queueSupportedNotional !== null) {
+      const minimumText =
+        minimumQualifyingUsdc !== null
+          ? `, below the minimum qualifying cost of $${formatCurrencyInput(minimumQualifyingUsdc)}`
+          : "";
+      return `Queue only supports about $${formatCurrencyInput(queueSupportedNotional)} right now${minimumText}. Wait for more queue before placing $${formatCurrencyInput(quoteSizeUsdc)}.`;
+    }
     return `Queue is too thin for $${formatCurrencyInput(quoteSizeUsdc)}: ${queueMultiple?.toFixed(2) ?? "0.00"}x visible versus ${minQueueMultiple.toFixed(2)}x required.`;
   }
   if (reason === "spread_too_large") {
@@ -374,6 +401,75 @@ function recommendationAction(
     return "watchlist";
   }
   return "do_not_place";
+}
+
+function estimateQuote(input: {
+  notional: number;
+  suggestedPrice: number | null;
+  midpoint: number | null;
+  spreadBand: number;
+  rewardFloorPrice: number | null;
+  bids: BookLevel[];
+  rewardDailyRate: number;
+  pricingZone: DetailPricingZone | null;
+  mode: DetailMode;
+}) {
+  const {
+    notional,
+    suggestedPrice,
+    midpoint,
+    spreadBand,
+    rewardFloorPrice,
+    bids,
+    rewardDailyRate,
+    pricingZone,
+    mode
+  } = input;
+
+  if (
+    !(notional > 0) ||
+    suggestedPrice === null ||
+    midpoint === null ||
+    rewardFloorPrice === null ||
+    pricingZone === null
+  ) {
+    return {
+      ownShares: null,
+      aprCeiling: null,
+      rawApr: null,
+      effectiveApr: null
+    };
+  }
+
+  const ownShares = notional / suggestedPrice;
+  const ourScore = scoreWeight(spreadBand, midpoint - suggestedPrice);
+  const bookVisibleWeight = visibleWeight(
+    bids,
+    midpoint,
+    spreadBand,
+    rewardFloorPrice
+  );
+  const ourWeight = ourScore === null ? null : ownShares * ourScore;
+  const denominator = ourWeight === null ? null : ourWeight + bookVisibleWeight;
+
+  if (ourWeight === null || denominator === null || denominator <= 0) {
+    return {
+      ownShares,
+      aprCeiling: null,
+      rawApr: null,
+      effectiveApr: null
+    };
+  }
+
+  const aprCeiling = rewardDailyRate * 36500 / notional;
+  const rawApr =
+    rewardDailyRate * (ourWeight / denominator) * 36500 / notional;
+  return {
+    ownShares,
+    aprCeiling,
+    rawApr,
+    effectiveApr: effectiveApr(rawApr, pricingZone, mode)
+  };
 }
 
 function scaleBounds(values: Array<number | null>) {
@@ -521,27 +617,25 @@ export function computeOpportunityDetail(input: {
             status = "watchlist";
             reason = "too_crowded";
           } else {
-            const ourScore = scoreWeight(spreadBand, midpoint - suggestedPrice);
-            const bookVisibleWeight = visibleWeight(
-              bids,
+            const estimate = estimateQuote({
+              notional: quoteSizeUsdc,
+              suggestedPrice,
               midpoint,
               spreadBand,
-              rewardFloorPrice
-            );
-            const ourWeight =
-              ownShares !== null && ourScore !== null ? ownShares * ourScore : null;
-            const denominator =
-              ourWeight === null ? null : ourWeight + bookVisibleWeight;
+              rewardFloorPrice,
+              bids,
+              rewardDailyRate: row.rewardDailyRate,
+              pricingZone,
+              mode
+            });
 
-            if (ourWeight === null || denominator === null || denominator <= 0) {
+            if (estimate.rawApr === null || estimate.effectiveApr === null) {
               status = "watchlist";
               reason = "unclear";
             } else {
-              aprCeiling = row.rewardDailyRate * 36500 / quoteSizeUsdc;
-              rawApr =
-                row.rewardDailyRate * (ourWeight / denominator) * 36500 / quoteSizeUsdc;
-              effectiveAprValue =
-                pricingZone === null ? null : effectiveApr(rawApr, pricingZone, mode);
+              aprCeiling = estimate.aprCeiling;
+              rawApr = estimate.rawApr;
+              effectiveAprValue = estimate.effectiveApr;
               status = "candidate_now";
               reason = "in_band";
             }
@@ -551,9 +645,54 @@ export function computeOpportunityDetail(input: {
     }
   }
 
-  const estimatedApr = mode === "two" ? rawApr : effectiveAprValue;
+  const queueSupportedNotional =
+    suggestedPrice !== null &&
+    queueShares !== null &&
+    meta.minQueueMultiple > 0
+      ? (queueShares / meta.minQueueMultiple) * suggestedPrice
+      : null;
+  const canSuggestReducedSize =
+    reason === "queue_too_thin" &&
+    queueSupportedNotional !== null &&
+    minimumQualifyingUsdc !== null &&
+    queueSupportedNotional >= minimumQualifyingUsdc - EPSILON &&
+    queueSupportedNotional < quoteSizeUsdc - EPSILON;
+  const recommendedNotional = canSuggestReducedSize
+    ? queueSupportedNotional
+    : quoteSizeUsdc;
+  const recommendedEstimate = canSuggestReducedSize
+    ? estimateQuote({
+        notional: recommendedNotional,
+        suggestedPrice,
+        midpoint,
+        spreadBand,
+        rewardFloorPrice,
+        bids,
+        rewardDailyRate: row.rewardDailyRate,
+        pricingZone,
+        mode
+      })
+    : {
+        ownShares,
+        aprCeiling,
+        rawApr,
+        effectiveApr: effectiveAprValue
+      };
+  const recommendedShares = canSuggestReducedSize
+    ? recommendedEstimate.ownShares
+    : ownShares;
+  const recommendedAprCeiling = canSuggestReducedSize
+    ? recommendedEstimate.aprCeiling
+    : aprCeiling;
+  const recommendedRawApr = canSuggestReducedSize
+    ? recommendedEstimate.rawApr
+    : rawApr;
+  const recommendedEffectiveApr = canSuggestReducedSize
+    ? recommendedEstimate.effectiveApr
+    : effectiveAprValue;
+  const estimatedApr = mode === "two" ? recommendedRawApr : recommendedEffectiveApr;
   const estimatedRewardPerDay =
-    estimatedApr !== null ? (quoteSizeUsdc * estimatedApr) / 36500 : null;
+    estimatedApr !== null ? (recommendedNotional * estimatedApr) / 36500 : null;
   const estimatedRewardUntilEnd =
     estimatedRewardPerDay !== null && rewardDaysRemaining !== null
       ? estimatedRewardPerDay * rewardDaysRemaining
@@ -566,12 +705,19 @@ export function computeOpportunityDetail(input: {
       reason,
       quoteSizeUsdc,
       queueMultiple,
-      minQueueMultiple: meta.minQueueMultiple
+      minQueueMultiple: meta.minQueueMultiple,
+      queueSupportedNotional,
+      suggestedNotional: recommendedNotional,
+      minimumQualifyingUsdc,
+      canSuggestReducedSize
     }),
     orderSide: row.sideToTrade,
     limitPrice: suggestedPrice,
-    shares: ownShares,
-    notional: quoteSizeUsdc,
+    shares: recommendedShares,
+    requestedNotional: quoteSizeUsdc,
+    notional: recommendedNotional,
+    queueSupportedNotional,
+    isReducedSize: canSuggestReducedSize,
     estimatedApr,
     estimatedRewardPerDay,
     estimatedRewardUntilEnd,
@@ -606,9 +752,9 @@ export function computeOpportunityDetail(input: {
     queueAheadNotional: queueNotional,
     queueMultiple,
     qualifyingDepthShares: depthShares,
-    aprCeiling,
-    rawApr,
-    effectiveApr: effectiveAprValue,
+    aprCeiling: recommendedAprCeiling,
+    rawApr: recommendedRawApr,
+    effectiveApr: recommendedEffectiveApr,
     estimatedRewardPerDay,
     estimatedRewardUntilEnd,
     rewardStartDate: row.rewardStartDate,
