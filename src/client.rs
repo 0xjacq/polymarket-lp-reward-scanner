@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::process::Command;
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use futures::{stream, StreamExt};
 use polymarket_client_sdk::clob::{
     types::request::OrderBookSummaryRequest,
@@ -60,6 +61,7 @@ impl PolymarketClient {
         let http = HttpClient::builder()
             .connect_timeout(config::operation_timeout())
             .timeout(config::operation_timeout())
+            .http1_only()
             .build()
             .context("failed to create HTTP client")?;
 
@@ -258,16 +260,7 @@ impl PolymarketClient {
         let mut offset = 0i32;
 
         loop {
-            let request = MarketsRequest::builder()
-                .limit(config::GAMMA_PAGE_SIZE)
-                .offset(offset)
-                .closed(false)
-                .include_tag(true)
-                .build();
-
-            let markets = self
-                .call_with_retry("gamma_markets_paginated", || self.gamma.markets(&request))
-                .await?;
+            let markets = self.fetch_markets_page_curl(offset).await?;
 
             let page_len = markets.len();
             for market in markets {
@@ -286,6 +279,59 @@ impl PolymarketClient {
         }
 
         Ok(found)
+    }
+
+    async fn fetch_markets_page_curl(&self, offset: i32) -> Result<Vec<Market>> {
+        let mut last_error = None;
+
+        for attempt in 0..config::MAX_RETRIES {
+            let request = || async { self.fetch_markets_page_curl_once(offset) };
+
+            match timeout(config::operation_timeout(), request()).await {
+                Ok(Ok(value)) => return Ok(value),
+                Ok(Err(err)) => {
+                    last_error = Some(err);
+
+                    if attempt + 1 == config::MAX_RETRIES {
+                        break;
+                    }
+                }
+                Err(err) => {
+                    last_error = Some(anyhow::Error::new(err));
+                }
+            }
+
+            sleep(config::retry_delay(attempt)).await;
+            eprintln!(
+                "warning: retrying gamma_markets_paginated attempt {}",
+                attempt + 2
+            );
+        }
+
+        Err(last_error
+            .unwrap_or_else(|| anyhow::anyhow!("operation failed: gamma_markets_paginated")))
+    }
+
+    fn fetch_markets_page_curl_once(&self, offset: i32) -> Result<Vec<Market>> {
+        let url = format!(
+            "{}/markets?limit={}&offset={}&include_tag=true&closed=false",
+            config::GAMMA_HOST,
+            config::GAMMA_PAGE_SIZE,
+            offset
+        );
+        let timeout_secs = config::operation_timeout().as_secs().to_string();
+        let output = Command::new("curl")
+            .args(["-fsS", "--http1.1", "--max-time", &timeout_secs, &url])
+            .output()
+            .context("failed to execute curl for gamma_markets_paginated")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("curl gamma_markets_paginated failed: {stderr}");
+        }
+
+        serde_json::from_slice::<Vec<Market>>(&output.stdout)
+            .context("failed to parse gamma_markets_paginated curl response")
     }
 
     pub async fn fetch_order_books(
@@ -389,27 +435,14 @@ impl PolymarketClient {
         let mut last_error = None;
 
         for attempt in 0..config::MAX_RETRIES {
-            let request = || async {
-                let mut http_request = self
-                    .http
-                    .get(format!("{}/rewards/markets/current", config::CLOB_HOST));
-
-                if let Some(cursor) = cursor.as_ref() {
-                    http_request = http_request.query(&[("next_cursor", cursor)]);
-                }
-
-                let response = http_request.send().await?;
-                let response = response.error_for_status()?;
-                response.json::<Page<CurrentRewardResponse>>().await
-            };
+            let request = || async { self.fetch_current_rewards_page_curl(cursor.as_ref()) };
 
             match timeout(config::operation_timeout(), request()).await {
                 Ok(Ok(value)) => return Ok(value),
                 Ok(Err(err)) => {
-                    let retryable = is_retryable_http(&err);
-                    last_error = Some(anyhow::Error::new(err));
+                    last_error = Some(err);
 
-                    if !retryable || attempt + 1 == config::MAX_RETRIES {
+                    if attempt + 1 == config::MAX_RETRIES {
                         break;
                     }
                 }
@@ -423,6 +456,31 @@ impl PolymarketClient {
         }
 
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("operation failed: current_rewards")))
+    }
+
+    fn fetch_current_rewards_page_curl(
+        &self,
+        cursor: Option<&String>,
+    ) -> Result<Page<CurrentRewardResponse>> {
+        let mut url = format!("{}/rewards/markets/current", config::CLOB_HOST);
+        if let Some(cursor) = cursor {
+            url.push_str("?next_cursor=");
+            url.push_str(cursor);
+        }
+
+        let timeout_secs = config::operation_timeout().as_secs().to_string();
+        let output = Command::new("curl")
+            .args(["-fsS", "--http1.1", "--max-time", &timeout_secs, &url])
+            .output()
+            .context("failed to execute curl for current_rewards")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("curl current_rewards failed: {stderr}");
+        }
+
+        serde_json::from_slice::<Page<CurrentRewardResponse>>(&output.stdout)
+            .context("failed to parse current_rewards curl response")
     }
 
     async fn fetch_market_competitiveness_detail(
@@ -539,14 +597,32 @@ fn normalize_reward(reward: CurrentRewardResponse) -> RewardProgram {
         .rewards_config
         .iter()
         .fold(dec!(0), |acc, config| acc + config.rate_per_day);
+    let reward_start_date = reward
+        .rewards_config
+        .iter()
+        .map(|config| config.start_date)
+        .filter(|date| is_reliable_reward_date(*date))
+        .min();
+    let reward_end_date = reward
+        .rewards_config
+        .iter()
+        .map(|config| config.end_date)
+        .filter(|date| is_reliable_reward_date(*date))
+        .max();
 
     RewardProgram {
         condition_id: reward.condition_id,
         reward_daily_rate,
         rewards_min_size: reward.rewards_min_size,
         rewards_max_spread: reward.rewards_max_spread,
+        reward_start_date,
+        reward_end_date,
         market_competitiveness: None,
     }
+}
+
+fn is_reliable_reward_date(date: NaiveDate) -> bool {
+    date.year() < 2100
 }
 
 fn normalize_market(market: Market) -> Option<MarketSnapshot> {
@@ -728,7 +804,44 @@ mod tests {
 
         let normalized = normalize_reward(reward);
         assert_eq!(normalized.reward_daily_rate, dec!(5));
+        assert_eq!(
+            normalized
+                .reward_start_date
+                .map(|date| date.to_string())
+                .as_deref(),
+            Some("2026-04-01")
+        );
+        assert_eq!(
+            normalized
+                .reward_end_date
+                .map(|date| date.to_string())
+                .as_deref(),
+            Some("2026-04-30")
+        );
         assert_eq!(normalized.market_competitiveness, None);
+    }
+
+    #[test]
+    fn drops_sentinel_reward_dates() {
+        let reward: CurrentRewardResponse = serde_json::from_value(json!({
+            "condition_id": format!("0x{}", "00".repeat(32)),
+            "rewards_config": [
+                {
+                    "asset_address": format!("0x{}", "00".repeat(20)),
+                    "start_date": "2500-12-31",
+                    "end_date": "2500-12-31",
+                    "rate_per_day": "2",
+                    "total_rewards": "60"
+                }
+            ],
+            "rewards_max_spread": "3.5",
+            "rewards_min_size": "50"
+        }))
+        .unwrap();
+
+        let normalized = normalize_reward(reward);
+        assert_eq!(normalized.reward_start_date, None);
+        assert_eq!(normalized.reward_end_date, None);
     }
 
     #[test]

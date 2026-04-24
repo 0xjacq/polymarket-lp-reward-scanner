@@ -34,7 +34,7 @@ type DetailState = {
 };
 
 const REFRESH_MS = 30_000;
-const COUNTDOWN_TICK_MS = 30_000;
+const COUNTDOWN_TICK_MS = 1_000;
 const DETAIL_DEBOUNCE_MS = 300;
 
 function formatNumber(value: number | null, fractionDigits = 0) {
@@ -80,6 +80,14 @@ function formatPrice(value: number | null) {
   return formatNumber(value, 3);
 }
 
+function formatCents(value: number | null) {
+  if (value === null) {
+    return "-";
+  }
+
+  return `${formatNumber(value * 100, 1)}c`;
+}
+
 function formatShares(value: number | null) {
   if (value === null) {
     return "-";
@@ -96,8 +104,24 @@ function formatTimestamp(value: string | null) {
   return new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
-    timeZone: "UTC"
+    timeZoneName: "short"
   }).format(new Date(value));
+}
+
+function formatRewardDate(value: string | null) {
+  if (!value) {
+    return "-";
+  }
+
+  const parts = value.split("-").map((part) => Number(part));
+  if (parts.length === 3 && parts.every((part) => Number.isFinite(part))) {
+    const [year, month, day] = parts;
+    return new Intl.DateTimeFormat("en-US", {
+      dateStyle: "medium"
+    }).format(new Date(year, month - 1, day));
+  }
+
+  return formatTimestamp(value);
 }
 
 function formatDurationFromMs(value: number | null) {
@@ -234,32 +258,37 @@ function markerPosition(
   return Math.max(0, Math.min(100, position));
 }
 
-function BandVisualization({ detail }: { detail: OpportunityDetailPayload }) {
+function actionLabel(action: OpportunityDetailPayload["recommendation"]["action"]) {
+  if (action === "place_bid") {
+    return "Place bid";
+  }
+  if (action === "watchlist") {
+    return "Watchlist";
+  }
+  return "Do not place";
+}
+
+function PriceLadder({ detail }: { detail: OpportunityDetailPayload }) {
   const bandStart = markerPosition(
-    detail.rewardFloorPrice,
+    detail.recommendation.rewardBandLow,
     detail.depth.scaleMin,
     detail.depth.scaleMax
   );
   const bandEnd = markerPosition(
-    detail.inBandUpperPrice,
+    detail.recommendation.rewardBandHigh,
     detail.depth.scaleMin,
     detail.depth.scaleMax
   );
   const markers = [
     {
-      label: "Reward floor",
-      value: detail.rewardFloorPrice,
-      className: "marker-floor"
-    },
-    {
-      label: "Suggested",
-      value: detail.suggestedPrice,
-      className: "marker-suggested"
-    },
-    {
       label: "Best bid",
       value: detail.bestBid,
       className: "marker-bid"
+    },
+    {
+      label: "Your bid",
+      value: detail.recommendation.limitPrice,
+      className: "marker-suggested"
     },
     {
       label: "Midpoint",
@@ -270,6 +299,11 @@ function BandVisualization({ detail }: { detail: OpportunityDetailPayload }) {
       label: "Best ask",
       value: detail.bestAsk,
       className: "marker-ask"
+    },
+    {
+      label: "Reward floor",
+      value: detail.recommendation.rewardBandLow,
+      className: "marker-floor"
     }
   ]
     .map((marker) => ({
@@ -289,11 +323,19 @@ function BandVisualization({ detail }: { detail: OpportunityDetailPayload }) {
     );
 
   return (
-    <div className="lp-chart">
-      <div className="lp-chart-track">
+    <section className="price-ladder" aria-label="Reward price band">
+      <div className="price-ladder-copy">
+        <h3>Reward price band</h3>
+        <p>
+          Green is the price range where a bid can earn LP rewards. Your order
+          should stay inside this zone.
+        </p>
+      </div>
+
+      <div className="price-ladder-track">
         {bandStart !== null && bandEnd !== null && bandEnd > bandStart ? (
           <div
-            className="lp-band"
+            className="price-band"
             style={{
               left: `${bandStart}%`,
               width: `${bandEnd - bandStart}%`
@@ -304,62 +346,88 @@ function BandVisualization({ detail }: { detail: OpportunityDetailPayload }) {
         {markers.map((marker) => (
           <div
             key={marker.label}
-            className={`lp-marker ${marker.className}`}
+            className={`price-marker ${marker.className}`}
             style={{ left: `${marker.position}%` }}
           >
-            <span />
-            <small>{marker.label}</small>
+            <span className="marker-line" />
+            <span className="marker-label">
+              {marker.label}
+              <strong>{formatCents(marker.value)}</strong>
+            </span>
           </div>
         ))}
       </div>
 
-      <div className="lp-scale">
-        <span>{formatPrice(detail.depth.scaleMin)}</span>
-        <span>{formatPrice(detail.depth.scaleMax)}</span>
+      <div className="price-ladder-scale">
+        <span>{formatCents(detail.depth.scaleMin)}</span>
+        <span>{formatCents(detail.depth.scaleMax)}</span>
       </div>
-    </div>
+
+      {bandStart === null || bandEnd === null || bandEnd <= bandStart ? (
+        <p className="detail-empty">Reward band unavailable for this row.</p>
+      ) : null}
+    </section>
   );
 }
 
-function DepthVisualization({ detail }: { detail: OpportunityDetailPayload }) {
+function QueueVisual({ detail }: { detail: OpportunityDetailPayload }) {
   const maxSize = Math.max(
     1,
     ...detail.depth.bids.map((level) => level.size)
   );
+  const order = detail.recommendation;
 
   return (
-    <div className="depth-table">
+    <section className="queue-visual" aria-label="Queue near suggested price">
+      <div className="queue-copy">
+        <h3>Queue near your order</h3>
+        <p>
+          Queue ahead means existing orders that would share rewards before yours.
+        </p>
+      </div>
+
       {detail.depth.bids.length === 0 ? (
         <p className="detail-empty">No live bid depth was returned.</p>
       ) : (
-        detail.depth.bids.map((level) => (
-          <div
-            key={`${level.price}-${level.cumulativeShares}`}
-            className={
-              level.isSuggested
-                ? "depth-row is-suggested"
-                : level.inBand
-                  ? "depth-row is-in-band"
-                  : "depth-row"
-            }
-          >
-            <div className="depth-price">{formatPrice(level.price)}</div>
-            <div className="depth-bar-shell">
-              <div
-                className="depth-bar"
-                style={{ width: `${(level.size / maxSize) * 100}%` }}
-              />
-            </div>
-            <div className="depth-size">{formatShares(level.size)}</div>
-            <div className="depth-queue">
-              {level.queueAheadShares > 0
-                ? formatShares(level.queueAheadShares)
-                : "-"}
-            </div>
+        <div className="queue-table">
+          <div className="queue-row queue-header">
+            <span>Price</span>
+            <span>Shares ahead</span>
+            <span>Why it matters</span>
           </div>
-        ))
+
+          {detail.depth.bids.map((level) => (
+            <div
+              key={`${level.price}-${level.cumulativeShares}`}
+              className={`queue-row queue-${level.role}${
+                level.isSuggested ? " is-suggested" : ""
+              }`}
+            >
+              <span className="queue-price">{formatCents(level.price)}</span>
+              <span className="queue-size">
+                <span
+                  className="queue-bar"
+                  style={{ width: `${Math.max(5, (level.size / maxSize) * 100)}%` }}
+                />
+                <strong>{formatShares(level.size)}</strong>
+              </span>
+              <span className="queue-note">{level.note}</span>
+            </div>
+          ))}
+
+          {order.limitPrice !== null && order.shares !== null ? (
+            <div className="queue-row your-order-row">
+              <span className="queue-price">{formatCents(order.limitPrice)}</span>
+              <span className="queue-size">
+                <span className="queue-bar your-order-bar" style={{ width: "100%" }} />
+                <strong>{formatShares(order.shares)}</strong>
+              </span>
+              <span className="queue-note">Your new order</span>
+            </div>
+          ) : null}
+        </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -380,11 +448,14 @@ function LPDetailsPanel({
   onQuoteSizeChange: (value: string) => void;
   defaultQuoteSize: number;
 }) {
+  const recommendation = detail?.recommendation ?? null;
+  const action = recommendation?.action ?? "do_not_place";
+
   return (
     <section className="lp-panel">
       <div className="lp-panel-toolbar">
         <label className="control lp-quote-control">
-          <span>Quote size (USDC)</span>
+          <span>I want to quote (USDC)</span>
           <input
             inputMode="decimal"
             value={quoteSizeInput}
@@ -394,13 +465,13 @@ function LPDetailsPanel({
         </label>
 
         <div className="lp-panel-copy">
-          <span>Side</span>
+          <span>Outcome</span>
           <strong>{row.sideToTrade}</strong>
         </div>
 
         <div className="lp-panel-copy">
-          <span>Live status</span>
-          <strong>{loading ? "Refreshing live book..." : "Live book ready"}</strong>
+          <span>Book status</span>
+          <strong>{loading ? "Refreshing..." : detail ? "Live book ready" : "Waiting"}</strong>
         </div>
       </div>
 
@@ -408,36 +479,86 @@ function LPDetailsPanel({
 
       {detail ? (
         <>
-          <p className="panel-note">
-            Live book fetched {formatTimestamp(detail.fetchedAt)}. Ranked snapshot was
-            published {formatTimestamp(detail.snapshotGeneratedAt)}.
-          </p>
+          <section className={`recommendation-card action-${action}`}>
+            <div className="recommendation-main">
+              <span className="action-badge">{actionLabel(action)}</span>
+              <div>
+                <h3>Order recommendation</h3>
+                <p>{recommendation?.reason}</p>
+              </div>
+            </div>
 
-          <BandVisualization detail={detail} />
+            <div className="recommendation-metrics">
+              <div className="recommendation-metric">
+                <span>Estimated APR</span>
+                <strong>{formatPercent(recommendation?.estimatedApr ?? null)}</strong>
+              </div>
+              <div className="recommendation-metric">
+                <span>Reward / day</span>
+                <strong>
+                  {formatMoney(recommendation?.estimatedRewardPerDay ?? null)}
+                </strong>
+              </div>
+              <div className="recommendation-metric">
+                <span>Until reward end</span>
+                <strong>
+                  {formatMoney(recommendation?.estimatedRewardUntilEnd ?? null)}
+                </strong>
+              </div>
+            </div>
+          </section>
 
-          <div className="detail-sections">
-            <section className="detail-card">
+          <section className="order-ticket">
+            <div>
+              <h3>Order to place</h3>
+              <p className="panel-note">
+                Keep the order open only while it remains inside the reward band.
+              </p>
+            </div>
+            <div className="ticket-grid">
+              <div className="ticket-row">
+                <span>Buy</span>
+                <strong>{recommendation?.orderSide ?? row.sideToTrade}</strong>
+              </div>
+              <div className="ticket-row">
+                <span>Limit price</span>
+                <strong>{formatCents(recommendation?.limitPrice ?? null)}</strong>
+              </div>
+              <div className="ticket-row">
+                <span>Shares</span>
+                <strong>{formatShares(recommendation?.shares ?? null)}</strong>
+              </div>
+              <div className="ticket-row">
+                <span>Estimated cost</span>
+                <strong>{formatMoney(recommendation?.notional ?? null)}</strong>
+              </div>
+            </div>
+          </section>
+
+          <PriceLadder detail={detail} />
+
+          <div className="detail-sections lp-detail-sections">
+            <section className="detail-card compact-detail-card">
               <h3>Live book</h3>
               <div className="detail-grid">
-                <MetricCell label="Best bid" value={formatPrice(detail.bestBid)} />
-                <MetricCell label="Best ask" value={formatPrice(detail.bestAsk)} />
+                <MetricCell label="Best bid" value={formatCents(detail.bestBid)} />
+                <MetricCell label="Best ask" value={formatCents(detail.bestAsk)} />
                 <MetricCell
-                  label="Adjusted midpoint"
-                  value={formatPrice(detail.adjustedMidpoint)}
+                  label="Midpoint"
+                  value={formatCents(detail.adjustedMidpoint)}
                 />
                 <MetricCell
-                  label="Spread x"
+                  label="Spread"
                   value={formatMultiple(detail.spreadRatio)}
                 />
               </div>
-              <DepthVisualization detail={detail} />
             </section>
 
-            <section className="detail-card">
+            <section className="detail-card compact-detail-card">
               <h3>Reward rules</h3>
               <div className="detail-grid">
                 <MetricCell
-                  label="Reward / day"
+                  label="Market reward / day"
                   value={formatMoney(row.rewardDailyRate)}
                 />
                 <MetricCell
@@ -449,86 +570,60 @@ function LPDetailsPanel({
                   value={formatShares(detail.rewardsMinSize)}
                 />
                 <MetricCell
-                  label="Eligible band"
-                  value={
-                    detail.rewardFloorPrice === null ||
-                    detail.inBandUpperPrice === null
-                      ? "-"
-                      : `${formatPrice(detail.rewardFloorPrice)} to ${formatPrice(
-                          detail.inBandUpperPrice
-                        )}`
-                  }
-                />
-              </div>
-            </section>
-
-            <section className="detail-card">
-              <h3>Your quote</h3>
-              <div className="detail-grid">
-                <MetricCell
-                  label="Suggested price"
-                  value={formatPrice(detail.suggestedPrice)}
-                />
-                <MetricCell label="Your shares" value={formatShares(detail.ownShares)} />
-                <MetricCell
-                  label="Min qualifying quote"
-                  value={formatMoney(detail.minimumQualifyingUsdc)}
-                />
-                <MetricCell
-                  label="Distance to ask"
-                  value={formatPrice(detail.distanceToAsk)}
-                />
-                <MetricCell
-                  label="Queue ahead"
-                  value={formatShares(detail.queueAheadShares)}
-                />
-                <MetricCell
-                  label="Queue ahead notional"
-                  value={formatMoney(detail.queueAheadNotional)}
-                />
-                <MetricCell
-                  label="Queue x"
-                  value={formatMultiple(detail.queueMultiple)}
-                />
-                <MetricCell
-                  label="Qualifying depth"
-                  value={formatShares(detail.qualifyingDepthShares)}
-                />
-              </div>
-            </section>
-
-            <section className="detail-card">
-              <h3>Estimated rewards</h3>
-              <div className="detail-grid">
-                <MetricCell
-                  label="APR ceiling"
-                  value={formatPercent(detail.aprCeiling)}
-                />
-                <MetricCell label="Raw APR" value={formatPercent(detail.rawApr)} />
-                <MetricCell
-                  label="Effective APR"
-                  value={formatPercent(detail.effectiveApr)}
-                />
-                <MetricCell
-                  label="Pricing zone"
-                  value={detail.pricingZone ? humanize(detail.pricingZone) : "-"}
-                />
-                <MetricCell
-                  label="Live status"
-                  value={humanize(detail.status)}
-                />
-                <MetricCell
-                  label="Live reason"
-                  value={humanize(detail.reason)}
+                  label="Reward ends"
+                  value={formatRewardDate(detail.rewardEndDate)}
                 />
               </div>
             </section>
           </div>
+
+          <QueueVisual detail={detail} />
+
+          <section className="detail-card compact-detail-card">
+            <h3>Reward estimate</h3>
+            <div className="detail-grid">
+              <MetricCell
+                label="Queue ahead"
+                value={formatShares(detail.queueAheadShares)}
+              />
+              <MetricCell
+                label="Queue x"
+                value={formatMultiple(detail.queueMultiple)}
+              />
+              <MetricCell
+                label="Min qualifying cost"
+                value={formatMoney(detail.minimumQualifyingUsdc)}
+              />
+              <MetricCell
+                label="Reward band"
+                value={
+                  recommendation?.rewardBandLow === null ||
+                  recommendation?.rewardBandHigh === null
+                    ? "-"
+                    : `${formatCents(recommendation?.rewardBandLow ?? null)} to ${formatCents(
+                        recommendation?.rewardBandHigh ?? null
+                      )}`
+                }
+              />
+              <MetricCell
+                label="Live book fetched"
+                value={formatTimestamp(detail.fetchedAt)}
+              />
+              <MetricCell
+                label="Snapshot ranked"
+                value={formatTimestamp(detail.snapshotGeneratedAt)}
+              />
+            </div>
+            <p className="panel-note">
+              Estimates use the current live order book and the latest ranked snapshot.
+              They are not guaranteed if the queue or reward rules change.
+            </p>
+          </section>
         </>
       ) : loading ? (
-        <p className="info-banner panel-banner">Loading live LP diagnostics...</p>
+        <p className="info-banner panel-banner">Loading live order recommendation...</p>
       ) : (
-        <p className="detail-empty">No live diagnostics available for this row.</p>
+        <p className="detail-empty">No live recommendation available for this row.</p>
       )}
     </section>
   );

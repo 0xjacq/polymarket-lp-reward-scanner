@@ -38,6 +38,8 @@ export type DashboardRow = {
   rewardDailyRate: number;
   rewardsMaxSpread: number;
   rewardsMinSize: number;
+  rewardStartDate: string | null;
+  rewardEndDate: string | null;
   marketCompetitiveness: number | null;
 };
 
@@ -57,6 +59,9 @@ export type OpportunityRow = {
   rewardDailyRate: number;
   rewardsMaxSpread: number;
   rewardsMinSize: number;
+  rewardStartDate: string | null;
+  rewardEndDate: string | null;
+  eventEndTime: string | null;
   pricingZone: string | null;
   marketCompetitiveness: number | null;
   spreadRatio: number | null;
@@ -158,6 +163,8 @@ function normalizeDashboardRow(value: unknown): DashboardRow {
     rewardDailyRate: toNumber(input.rewardDailyRate) ?? 0,
     rewardsMaxSpread: toNumber(input.rewardsMaxSpread) ?? 0,
     rewardsMinSize: toNumber(input.rewardsMinSize) ?? 0,
+    rewardStartDate: toStringValue(input.rewardStartDate),
+    rewardEndDate: toStringValue(input.rewardEndDate),
     marketCompetitiveness: toNumber(input.marketCompetitiveness)
   };
 }
@@ -180,6 +187,9 @@ function normalizeOpportunityRow(value: unknown): OpportunityRow {
     rewardDailyRate: toNumber(input.rewardDailyRate) ?? 0,
     rewardsMaxSpread: toNumber(input.rewardsMaxSpread) ?? 0,
     rewardsMinSize: toNumber(input.rewardsMinSize) ?? 0,
+    rewardStartDate: toStringValue(input.rewardStartDate),
+    rewardEndDate: toStringValue(input.rewardEndDate),
+    eventEndTime: toStringValue(input.eventEndTime),
     pricingZone: toStringValue(input.pricingZone),
     marketCompetitiveness: toNumber(input.marketCompetitiveness),
     spreadRatio: toNumber(input.spreadRatio),

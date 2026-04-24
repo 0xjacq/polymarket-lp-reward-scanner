@@ -370,6 +370,302 @@ a {
   font-size: 0.9rem;
 }
 
+.recommendation-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr);
+  gap: 16px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.recommendation-card.action-place_bid {
+  border-color: rgba(31, 199, 122, 0.5);
+  background: rgba(31, 199, 122, 0.08);
+}
+
+.recommendation-card.action-watchlist {
+  border-color: rgba(240, 184, 74, 0.52);
+  background: rgba(240, 184, 74, 0.08);
+}
+
+.recommendation-card.action-do_not_place {
+  border-color: rgba(242, 109, 61, 0.5);
+  background: rgba(242, 109, 61, 0.08);
+}
+
+.recommendation-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.recommendation-main h3,
+.order-ticket h3,
+.price-ladder h3,
+.queue-visual h3,
+.detail-card h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.recommendation-main p,
+.price-ladder-copy p,
+.queue-copy p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.action-badge {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  border-radius: 6px;
+  padding: 0 10px;
+  font-weight: 700;
+  color: #101312;
+  background: var(--gold);
+}
+
+.action-place_bid .action-badge {
+  background: var(--green);
+}
+
+.action-do_not_place .action-badge {
+  background: var(--coral);
+}
+
+.recommendation-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.recommendation-metric,
+.ticket-row {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.recommendation-metric span,
+.ticket-row span,
+.detail-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.recommendation-metric strong,
+.ticket-row strong,
+.detail-grid strong {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.2;
+}
+
+.recommendation-metric strong {
+  font-size: 1.16rem;
+}
+
+.order-ticket {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.4fr);
+  gap: 16px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.ticket-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ticket-row {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
+.ticket-row strong {
+  font-size: 1.18rem;
+}
+
+.price-ladder,
+.queue-visual {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.price-ladder-copy,
+.queue-copy {
+  max-width: 72ch;
+}
+
+.price-ladder-track {
+  position: relative;
+  height: 112px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(242, 109, 61, 0.1), transparent 20%, transparent 80%, rgba(242, 109, 61, 0.1)),
+    var(--surface-soft);
+  overflow: hidden;
+}
+
+.price-band {
+  position: absolute;
+  top: 28px;
+  height: 34px;
+  border-radius: 6px;
+  background: rgba(31, 199, 122, 0.25);
+  border: 1px solid rgba(31, 199, 122, 0.5);
+}
+
+.price-marker {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  min-width: 86px;
+  color: var(--muted);
+}
+
+.marker-line {
+  width: 2px;
+  height: 56px;
+  background: currentColor;
+}
+
+.marker-label {
+  display: grid;
+  gap: 2px;
+  margin-top: 6px;
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: rgba(16, 19, 18, 0.94);
+  text-align: center;
+  font-size: 0.74rem;
+  line-height: 1.1;
+}
+
+.marker-label strong {
+  font-size: 0.82rem;
+}
+
+.price-ladder-scale {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.lp-detail-sections {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.compact-detail-card {
+  background: var(--surface);
+}
+
+.queue-table {
+  display: grid;
+  gap: 8px;
+}
+
+.queue-row {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr) minmax(160px, 0.8fr);
+  gap: 12px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
+.queue-header {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  font-size: 0.82rem;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.queue-price {
+  font-weight: 700;
+}
+
+.queue-size {
+  position: relative;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+}
+
+.queue-size strong {
+  position: relative;
+  padding: 0 8px;
+  font-size: 0.86rem;
+}
+
+.queue-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: rgba(240, 184, 74, 0.45);
+}
+
+.queue-below_order .queue-bar {
+  background: rgba(136, 164, 168, 0.34);
+}
+
+.queue-outside_band {
+  color: var(--muted);
+}
+
+.queue-outside_band .queue-bar {
+  background: rgba(136, 164, 168, 0.2);
+}
+
+.your-order-row {
+  border-color: rgba(31, 199, 122, 0.55);
+  background: rgba(31, 199, 122, 0.08);
+}
+
+.your-order-bar {
+  background: rgba(31, 199, 122, 0.55);
+}
+
+.queue-note {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
 .lp-chart {
   display: grid;
   gap: 8px;
@@ -544,8 +840,16 @@ a {
   }
 
   .lp-panel-toolbar,
-  .detail-sections {
+  .detail-sections,
+  .recommendation-card,
+  .order-ticket,
+  .lp-detail-sections {
     grid-template-columns: 1fr;
+  }
+
+  .ticket-grid,
+  .recommendation-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -569,7 +873,22 @@ a {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .depth-row {
-    grid-template-columns: 58px minmax(0, 1fr) 62px 72px;
+  .ticket-grid,
+  .recommendation-metrics,
+  .detail-grid,
+  .queue-row {
+    grid-template-columns: 1fr;
+  }
+
+  .recommendation-main {
+    grid-template-columns: 1fr;
+  }
+
+  .price-marker {
+    min-width: 64px;
+  }
+
+  .marker-label {
+    font-size: 0.68rem;
   }
 }

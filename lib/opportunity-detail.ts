@@ -31,6 +31,8 @@ export type OpportunityDetailDepthLevel = {
   queueAheadShares: number;
   inBand: boolean;
   isSuggested: boolean;
+  role: "queue_ahead" | "below_order" | "outside_band";
+  note: string;
 };
 
 export type OpportunityDetailPayload = {
@@ -55,16 +57,38 @@ export type OpportunityDetailPayload = {
   aprCeiling: number | null;
   rawApr: number | null;
   effectiveApr: number | null;
+  estimatedRewardPerDay: number | null;
+  estimatedRewardUntilEnd: number | null;
+  rewardStartDate: string | null;
+  rewardEndDate: string | null;
+  rewardDaysRemaining: number | null;
+  eventEndTime: string | null;
   spreadRatio: number | null;
   distanceToAsk: number | null;
   pricingZone: DetailPricingZone | null;
   status: string;
   reason: string;
+  recommendation: OpportunityRecommendation;
   depth: {
     bids: OpportunityDetailDepthLevel[];
     scaleMin: number;
     scaleMax: number;
   };
+};
+
+export type OpportunityRecommendation = {
+  action: "place_bid" | "watchlist" | "do_not_place";
+  title: string;
+  reason: string;
+  orderSide: string;
+  limitPrice: number | null;
+  shares: number | null;
+  notional: number;
+  estimatedApr: number | null;
+  estimatedRewardPerDay: number | null;
+  estimatedRewardUntilEnd: number | null;
+  rewardBandLow: number | null;
+  rewardBandHigh: number | null;
 };
 
 function toNumber(value: unknown): number | null {
@@ -229,10 +253,35 @@ function compactDepth(
   rewardFloorPrice: number | null,
   adjustedMidpointPrice: number | null,
   suggestedPrice: number | null
-) {
+): OpportunityDetailDepthLevel[] {
   let cumulative = 0;
-  return bids.slice(0, 20).map((level) => {
+  const focused = bids
+    .filter((level) => {
+      if (rewardFloorPrice === null || adjustedMidpointPrice === null) {
+        return true;
+      }
+      return (
+        level.price >= rewardFloorPrice - 0.03 - EPSILON &&
+        level.price <= adjustedMidpointPrice + 0.03 + EPSILON
+      );
+    })
+    .slice(0, 12);
+  const visible = focused.length > 0 ? focused : bids.slice(0, 8);
+
+  return visible.map((level) => {
     cumulative += level.size;
+    const inBand =
+      rewardFloorPrice !== null &&
+      adjustedMidpointPrice !== null &&
+      level.price >= rewardFloorPrice - EPSILON &&
+      level.price < adjustedMidpointPrice - EPSILON;
+    const isQueueAhead =
+      suggestedPrice !== null && level.price >= suggestedPrice - EPSILON;
+    const role: OpportunityDetailDepthLevel["role"] = inBand
+      ? isQueueAhead
+        ? "queue_ahead"
+        : "below_order"
+      : "outside_band";
     return {
       price: level.price,
       size: level.size,
@@ -241,15 +290,90 @@ function compactDepth(
         suggestedPrice === null || level.price + EPSILON < suggestedPrice
           ? 0
           : cumulative,
-      inBand:
-        rewardFloorPrice !== null &&
-        adjustedMidpointPrice !== null &&
-        level.price >= rewardFloorPrice - EPSILON &&
-        level.price < adjustedMidpointPrice - EPSILON,
+      inBand,
       isSuggested:
-        suggestedPrice !== null && Math.abs(level.price - suggestedPrice) < EPSILON
+        suggestedPrice !== null && Math.abs(level.price - suggestedPrice) < EPSILON,
+      role,
+      note:
+        role === "queue_ahead"
+          ? "Ahead of your order"
+          : role === "below_order"
+            ? "Below your order"
+            : "Outside reward band"
     };
   });
+}
+
+function daysRemaining(endDate: string | null) {
+  if (!endDate) {
+    return null;
+  }
+  const parts = endDate.split("-").map((part) => Number(part));
+  if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) {
+    return null;
+  }
+  const [year, month, day] = parts;
+  const endExclusive = Date.UTC(year, month - 1, day + 1);
+  const remainingMs = endExclusive - Date.now();
+  if (remainingMs <= 0) {
+    return 0;
+  }
+  return Math.ceil(remainingMs / 86_400_000);
+}
+
+function formatCurrencyInput(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 0,
+    minimumFractionDigits: 0
+  }).format(value);
+}
+
+function recommendationReason(input: {
+  status: string;
+  reason: string;
+  quoteSizeUsdc: number;
+  queueMultiple: number | null;
+  minQueueMultiple: number;
+}) {
+  const { status, reason, quoteSizeUsdc, queueMultiple, minQueueMultiple } = input;
+  if (status === "candidate_now") {
+    return "Inside the reward band with enough queue ahead at the current book.";
+  }
+  if (reason === "queue_too_thin") {
+    return `Queue is too thin for $${formatCurrencyInput(quoteSizeUsdc)}: ${queueMultiple?.toFixed(2) ?? "0.00"}x visible versus ${minQueueMultiple.toFixed(2)}x required.`;
+  }
+  if (reason === "spread_too_large") {
+    return "The market spread is currently wider than the reward band.";
+  }
+  if (reason === "quote_too_small_for_min_shares") {
+    return "This quote size is too small to meet the minimum rewarded shares.";
+  }
+  if (reason === "reward_rules_unavailable") {
+    return "Reward rules are unavailable for this row, so the app cannot compute a rewarded order.";
+  }
+  return "Current live book does not produce a clean rewarded order.";
+}
+
+function recommendationTitle(status: string) {
+  if (status === "candidate_now") {
+    return "Place bid";
+  }
+  if (status === "watchlist") {
+    return "Watchlist";
+  }
+  return "Do not place";
+}
+
+function recommendationAction(
+  status: string
+): OpportunityRecommendation["action"] {
+  if (status === "candidate_now") {
+    return "place_bid";
+  }
+  if (status === "watchlist") {
+    return "watchlist";
+  }
+  return "do_not_place";
 }
 
 function scaleBounds(values: Array<number | null>) {
@@ -318,15 +442,19 @@ export function computeOpportunityDetail(input: {
   const spreadBand = row.rewardsMaxSpread / 100;
   const bestBid = bids[0]?.price ?? null;
   const bestAsk = asks[0]?.price ?? null;
-  const midpoint = adjustedMidpoint(bids, asks, row.rewardsMinSize);
+  const hasRewardRules = row.rewardsMaxSpread > 0 && row.rewardsMinSize > 0;
+  const midpoint = hasRewardRules
+    ? adjustedMidpoint(bids, asks, row.rewardsMinSize)
+    : null;
   const currentSpread =
     bestBid !== null && bestAsk !== null ? bestAsk - bestBid : null;
   const spreadRatio =
     currentSpread !== null && spreadBand > 0 ? currentSpread / spreadBand : null;
   const pricingZone = midpoint === null ? null : toPricingZone(midpoint);
+  const rewardDaysRemaining = daysRemaining(row.rewardEndDate);
 
   let status = "skip";
-  let reason = "missing_book_data";
+  let reason = hasRewardRules ? "missing_book_data" : "reward_rules_unavailable";
   let rewardFloorPrice: number | null = null;
   let suggestedPrice: number | null = null;
   let ownShares: number | null = null;
@@ -340,7 +468,7 @@ export function computeOpportunityDetail(input: {
   let rawApr: number | null = null;
   let effectiveAprValue: number | null = null;
 
-  if (midpoint !== null && bestAsk !== null) {
+  if (hasRewardRules && midpoint !== null && bestAsk !== null) {
     status = "skip";
     reason = "missing_book_data";
 
@@ -423,6 +551,34 @@ export function computeOpportunityDetail(input: {
     }
   }
 
+  const estimatedApr = mode === "two" ? rawApr : effectiveAprValue;
+  const estimatedRewardPerDay =
+    estimatedApr !== null ? (quoteSizeUsdc * estimatedApr) / 36500 : null;
+  const estimatedRewardUntilEnd =
+    estimatedRewardPerDay !== null && rewardDaysRemaining !== null
+      ? estimatedRewardPerDay * rewardDaysRemaining
+      : null;
+  const recommendation: OpportunityRecommendation = {
+    action: recommendationAction(status),
+    title: recommendationTitle(status),
+    reason: recommendationReason({
+      status,
+      reason,
+      quoteSizeUsdc,
+      queueMultiple,
+      minQueueMultiple: meta.minQueueMultiple
+    }),
+    orderSide: row.sideToTrade,
+    limitPrice: suggestedPrice,
+    shares: ownShares,
+    notional: quoteSizeUsdc,
+    estimatedApr,
+    estimatedRewardPerDay,
+    estimatedRewardUntilEnd,
+    rewardBandLow: rewardFloorPrice,
+    rewardBandHigh: midpoint
+  };
+
   const bounds = scaleBounds([
     bestBid,
     bestAsk,
@@ -453,11 +609,18 @@ export function computeOpportunityDetail(input: {
     aprCeiling,
     rawApr,
     effectiveApr: effectiveAprValue,
+    estimatedRewardPerDay,
+    estimatedRewardUntilEnd,
+    rewardStartDate: row.rewardStartDate,
+    rewardEndDate: row.rewardEndDate,
+    rewardDaysRemaining,
+    eventEndTime: row.eventEndTime,
     spreadRatio,
     distanceToAsk,
     pricingZone,
     status,
     reason,
+    recommendation,
     depth: {
       bids: compactDepth(bids, rewardFloorPrice, midpoint, suggestedPrice),
       scaleMin: bounds.scaleMin,
