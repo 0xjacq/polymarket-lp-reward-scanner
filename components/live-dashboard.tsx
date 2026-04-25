@@ -297,7 +297,7 @@ function MarketPriceDepthChart({ detail }: { detail: OpportunityDetailPayload })
     if (maxTimestamp - minTimestamp <= 0) {
       return 384;
     }
-    return 56 + ((timestamp - minTimestamp) / (maxTimestamp - minTimestamp)) * 656;
+    return 56 + ((timestamp - minTimestamp) / (maxTimestamp - minTimestamp)) * 648;
   };
   const historyPath = history
     .map((point, index) => {
@@ -319,6 +319,31 @@ function MarketPriceDepthChart({ detail }: { detail: OpportunityDetailPayload })
     { label: "Best ask", value: detail.bestAsk, className: "ask-guide" },
     { label: "Your bid", value: detail.recommendation.limitPrice, className: "bid-guide" },
     { label: "Best bid", value: detail.bestBid, className: "bid-guide" }
+  ];
+  const callouts = [
+    {
+      label: "Reward band",
+      value:
+        rewardLow === null || rewardHigh === null
+          ? "-"
+          : `${formatCents(rewardLow)} to ${formatCents(rewardHigh)}`,
+      className: "band-callout"
+    },
+    {
+      label: "Your suggested bid",
+      value: formatCents(detail.recommendation.limitPrice),
+      className: "bid-callout"
+    },
+    {
+      label: "Best bid",
+      value: formatCents(detail.bestBid),
+      className: "bid-callout"
+    },
+    {
+      label: "Best ask",
+      value: formatCents(detail.bestAsk),
+      className: "ask-callout"
+    }
   ];
   const priceTicks = [0, 0.25, 0.5, 0.75, 1].map(
     (ratio) => minPrice + (maxPrice - minPrice) * ratio
@@ -351,6 +376,15 @@ function MarketPriceDepthChart({ detail }: { detail: OpportunityDetailPayload })
       </div>
 
       <div className="market-chart-wrap">
+        <div className="chart-callouts">
+          {callouts.map((callout) => (
+            <div className={`chart-callout ${callout.className}`} key={callout.label}>
+              <span>{callout.label}</span>
+              <strong>{callout.value}</strong>
+            </div>
+          ))}
+        </div>
+
         <svg className="market-chart" viewBox="0 0 1000 420" role="img">
           <defs>
             <linearGradient id="priceLineGradient" x1="0" x2="1" y1="0" y2="0">
@@ -360,13 +394,14 @@ function MarketPriceDepthChart({ detail }: { detail: OpportunityDetailPayload })
           </defs>
 
           <rect className="chart-panel" x="40" y="36" width="900" height="336" rx="8" />
+          <rect className="depth-panel" x="738" y="36" width="202" height="336" rx="8" />
 
           {priceTicks.map((tick) => {
             const y = chartY(tick, minPrice, maxPrice);
             return (
               <g key={tick}>
-                <line className="chart-grid" x1="56" x2="940" y1={y} y2={y} />
-                <text className="chart-axis-label" x="948" y={y + 4}>
+                <line className="chart-grid" x1="56" x2="724" y1={y} y2={y} />
+                <text className="chart-axis-label" x="720" y={y - 6}>
                   {formatCents(tick)}
                 </text>
               </g>
@@ -379,13 +414,10 @@ function MarketPriceDepthChart({ detail }: { detail: OpportunityDetailPayload })
                 className="chart-reward-band"
                 x="56"
                 y={bandTop}
-                width="884"
+                width="668"
                 height={bandBottom - bandTop}
                 rx="6"
               />
-              <text className="chart-band-label" x="66" y={bandTop + 18}>
-                Reward band
-              </text>
             </>
           ) : null}
 
@@ -413,16 +445,15 @@ function MarketPriceDepthChart({ detail }: { detail: OpportunityDetailPayload })
             const y = chartY(line.value, minPrice, maxPrice);
             return (
               <g key={line.label}>
-                <line className={`chart-guide ${line.className}`} x1="56" x2="940" y1={y} y2={y} />
-                <text className={`chart-guide-label ${line.className}`} x="60" y={y - 6}>
-                  {line.label} {formatCents(line.value)}
-                </text>
+                <line className={`chart-guide ${line.className}`} x1="56" x2="724" y1={y} y2={y} />
               </g>
             );
           })}
 
           <line className="depth-divider" x1="738" x2="738" y1="36" y2="372" />
-          <text className="depth-title" x="758" y="58">Live depth</text>
+          <text className="depth-title" x="760" y="58">Live depth</text>
+          <text className="depth-side-label depth-bid-label" x="826" y="78">Bid</text>
+          <text className="depth-side-label depth-ask-label" x="852" y="78">Ask</text>
 
           {visibleDepthLevels.map((level) => {
             const y = chartY(level.price, minPrice, maxPrice);
@@ -443,7 +474,7 @@ function MarketPriceDepthChart({ detail }: { detail: OpportunityDetailPayload })
                 {level.askShares > 0 ? (
                   <rect
                     className="depth-ask"
-                    x="844"
+                    x="848"
                     y={y - 5}
                     width={Math.max(2, askWidth)}
                     height="10"

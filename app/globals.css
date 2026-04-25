@@ -513,7 +513,47 @@ a {
 
 .market-chart-wrap {
   display: grid;
+  gap: 12px;
+}
+
+.chart-callouts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+
+.chart-callout {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
+.chart-callout span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.chart-callout strong {
+  overflow-wrap: anywhere;
+  font-size: 1.05rem;
+  line-height: 1.15;
+}
+
+.band-callout {
+  border-color: rgba(31, 199, 122, 0.45);
+  background: rgba(31, 199, 122, 0.08);
+}
+
+.bid-callout {
+  border-color: rgba(31, 199, 122, 0.34);
+}
+
+.ask-callout {
+  border-color: rgba(242, 109, 61, 0.38);
 }
 
 .market-chart {
@@ -529,6 +569,11 @@ a {
   stroke: rgba(136, 164, 168, 0.18);
 }
 
+.depth-panel {
+  fill: rgba(31, 36, 33, 0.46);
+  stroke: rgba(136, 164, 168, 0.16);
+}
+
 .chart-grid {
   stroke: rgba(136, 164, 168, 0.16);
   stroke-width: 1;
@@ -536,22 +581,21 @@ a {
 
 .chart-axis-label,
 .depth-price-label,
-.depth-title {
+.depth-title,
+.depth-side-label {
   fill: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 650;
+}
+
+.chart-axis-label {
+  text-anchor: end;
 }
 
 .chart-reward-band {
   fill: rgba(31, 199, 122, 0.16);
   stroke: rgba(31, 199, 122, 0.72);
   stroke-width: 1.5;
-}
-
-.chart-band-label {
-  fill: #d9f7e7;
-  font-size: 14px;
-  font-weight: 700;
 }
 
 .chart-price-line {
@@ -581,19 +625,6 @@ a {
   stroke: rgba(242, 109, 61, 0.72);
 }
 
-.chart-guide-label {
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.chart-guide-label.bid-guide {
-  fill: #d9f7e7;
-}
-
-.chart-guide-label.ask-guide {
-  fill: #ffd7ca;
-}
-
 .chart-empty-label {
   fill: var(--muted);
   font-size: 16px;
@@ -602,6 +633,19 @@ a {
 .depth-divider {
   stroke: rgba(136, 164, 168, 0.22);
   stroke-width: 1;
+}
+
+.depth-side-label {
+  font-size: 11px;
+}
+
+.depth-bid-label {
+  fill: #baf0d5;
+  text-anchor: end;
+}
+
+.depth-ask-label {
+  fill: #ffd7ca;
 }
 
 .depth-bid {
@@ -737,6 +781,7 @@ a {
 
   .ticket-grid,
   .recommendation-metrics,
+  .chart-callouts,
   .detail-grid {
     grid-template-columns: 1fr;
   }
