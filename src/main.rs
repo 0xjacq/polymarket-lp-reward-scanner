@@ -4,13 +4,11 @@ use anyhow::Result;
 use chrono::Utc;
 use clap::Parser;
 use models::{DashboardRow, OpportunityStatus, SortField};
-use polymarket_lp_reward_scanner::{
-    client::PolymarketClient, config, display, filters, models, scoring,
-};
+use napolyrewardfarmor::{client::PolymarketClient, config, display, filters, models, scoring};
 use rust_decimal::Decimal;
 
 #[derive(Debug, Parser)]
-#[command(name = "polymarket-lp-reward-scanner")]
+#[command(name = "napolyrewardfarmor")]
 #[command(
     about = "Scan Polymarket reward markets for low-fill-risk one-sided quoting opportunities."
 )]

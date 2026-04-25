@@ -2,10 +2,10 @@ use anyhow::Result;
 use clap::Parser;
 use polymarket_client_sdk::types::Decimal;
 
-use polymarket_lp_reward_scanner::client::PolymarketClient;
-use polymarket_lp_reward_scanner::config;
-use polymarket_lp_reward_scanner::models::SortField;
-use polymarket_lp_reward_scanner::snapshot::{build_snapshot, SnapshotBuildConfig};
+use napolyrewardfarmor::client::PolymarketClient;
+use napolyrewardfarmor::config;
+use napolyrewardfarmor::models::SortField;
+use napolyrewardfarmor::snapshot::{build_snapshot, SnapshotBuildConfig};
 
 #[derive(Debug, Parser)]
 #[command(name = "snapshot")]

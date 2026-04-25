@@ -25,13 +25,15 @@ The loader precedence remains:
 Do not set `SNAPSHOT_LOCAL_PATH` in Vercel.
 Do not rely on `BLOB_READ_WRITE_TOKEN` in the Vercel app runtime for the normal production path.
 
-For local browser testing with real published data, create `.env.local` with:
+Browser QA should use the canonical deployed Vercel app, not a local Next.js server. Local commands are limited to build/type checks and explicit data-generation debugging.
 
-```bash
-SNAPSHOT_PUBLIC_URL=https://.../scanner/latest.json
-```
+Canonical production URL:
 
-Use `npm run dev:mock-snapshot` only when you intentionally want the committed synthetic fixture at `fixtures/mock-snapshot.json`.
+- `https://polymarket-lp-reward-scanner.vercel.app/`
+
+Public GitHub repository:
+
+- `https://github.com/0xjacq/polymarket-lp-reward-scanner`
 
 ## Worker Environment
 
@@ -53,7 +55,7 @@ Optional tuning:
 
 ## GitHub Actions Setup
 
-The workflow lives at the standalone repo root in `.github/workflows/publish-snapshot.yml`.
+Add the workflow at the git repo root in `.github/workflows/publish-snapshot.yml`.
 
 It runs on:
 
@@ -92,6 +94,18 @@ The publish script output includes the final Blob pathname and URL:
 npm run snapshot:publish
 ```
 
+## Vercel QA and Deployment
+
+For UI changes:
+
+1. Run `npm run build` locally for compile/type validation.
+2. Deploy the app with Vercel.
+3. Open `https://polymarket-lp-reward-scanner.vercel.app/` in the browser and test there.
+
+Do not use `npm run dev`, `npm run dev:mock-snapshot`, or `SNAPSHOT_LOCAL_PATH=... npm run dev` as the browser QA path. Those are only debugging tools for isolated snapshot issues.
+
+Before committing deployment or snapshot changes, verify that `.env*`, `.vercel/`, `.next/`, `node_modules/`, and `target/` are not staged.
+
 ## Local Development
 
 Real published snapshot in local dev:
@@ -112,8 +126,8 @@ npm run dev:mock-snapshot
 Explicit local generated file:
 
 ```bash
-cargo run --bin snapshot -- --quote-size-usdc 1000 > /tmp/polymarket-lp-reward-scanner-snapshot.json
-SNAPSHOT_LOCAL_PATH=/tmp/polymarket-lp-reward-scanner-snapshot.json npm run dev
+cargo run --bin snapshot -- --quote-size-usdc 1000 > /tmp/napolyrewardfarmor-snapshot.json
+SNAPSHOT_LOCAL_PATH=/tmp/napolyrewardfarmor-snapshot.json npm run dev
 ```
 
 ## Freshness and Stale State

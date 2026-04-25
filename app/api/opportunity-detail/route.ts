@@ -4,6 +4,7 @@ import {
   computeOpportunityDetail,
   fetchLiveBook,
   fetchPriceHistory,
+  parsePriceHistoryInterval,
   type DetailMode
 } from "@/lib/opportunity-detail";
 import { formatSnapshotError, getSnapshot } from "@/lib/snapshot";
@@ -50,9 +51,12 @@ export async function GET(request: NextRequest) {
       request.nextUrl.searchParams.get("quoteSizeUsdc"),
       snapshot.meta.quoteSizeUsdc
     );
-    const [liveBook, priceChart] = await Promise.all([
+    const priceHistoryInterval = parsePriceHistoryInterval(
+      request.nextUrl.searchParams.get("interval")
+    );
+    const [liveBook, priceHistory] = await Promise.all([
       fetchLiveBook(tokenId),
-      fetchPriceHistory(tokenId)
+      fetchPriceHistory(tokenId, priceHistoryInterval).catch(() => [])
     ]);
     const payload = computeOpportunityDetail({
       row,
@@ -61,7 +65,7 @@ export async function GET(request: NextRequest) {
       quoteSizeUsdc,
       bids: liveBook.bids,
       asks: liveBook.asks,
-      priceChart,
+      priceHistory,
       tickSize: liveBook.tickSize,
       fetchedAt: liveBook.fetchedAt
     });

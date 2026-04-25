@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Utc};
 use clap::ValueEnum;
 use polymarket_client_sdk::types::{Decimal, B256, U256};
 use serde::Serialize;
@@ -9,8 +9,6 @@ pub struct RewardProgram {
     pub reward_daily_rate: Decimal,
     pub rewards_min_size: Decimal,
     pub rewards_max_spread: Decimal,
-    pub reward_start_date: Option<NaiveDate>,
-    pub reward_end_date: Option<NaiveDate>,
     pub market_competitiveness: Option<Decimal>,
 }
 
@@ -142,8 +140,6 @@ pub struct Opportunity {
     pub reward_daily_rate: Decimal,
     pub rewards_max_spread: Decimal,
     pub rewards_min_size: Decimal,
-    pub reward_start_date: Option<NaiveDate>,
-    pub reward_end_date: Option<NaiveDate>,
     pub pricing_zone: Option<PricingZone>,
     pub market_competitiveness: Option<Decimal>,
     pub spread_ratio: Option<Decimal>,

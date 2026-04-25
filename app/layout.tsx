@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Polymarket LP Reward Scanner",
+  title: "Napolyrewardfarmor Scanner",
   description: "Snapshot-backed Polymarket scanner and rewards dashboard"
 };
 

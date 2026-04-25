@@ -1,16 +1,52 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
+import {
+  AreaSeries,
+  ColorType,
+  createChart,
+  LineSeries,
+  LineStyle,
+  type IChartApi,
+  type ISeriesApi,
+  type Time
+} from "lightweight-charts";
+import {
+  Activity,
+  BarChart3,
+  ExternalLink,
+  Radio,
+  RefreshCw,
+  Search,
+  Wifi,
+  WifiOff
+} from "lucide-react";
 
 import type {
   DetailMode,
-  OpportunityDetailPayload
+  OpportunityDetailPayload,
+  PriceHistoryInterval
 } from "@/lib/opportunity-detail";
+import {
+  applyLevelChange,
+  deriveLiveDetail,
+  levelsFromDepth,
+  normalizeBookLevels,
+  type BookLevel,
+  type BookSide
+} from "@/lib/orderbook-utils";
 import type {
   EventTiming,
   OpportunityRow,
   ScannerResponse
 } from "@/lib/snapshot";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 
 type Props = {
   initialScanner: ScannerResponse | null;
@@ -33,9 +69,23 @@ type DetailState = {
   data: OpportunityDetailPayload | null;
 };
 
+type ConnectionState = "idle" | "connecting" | "live" | "reconnecting" | "stale";
+
 const REFRESH_MS = 30_000;
-const COUNTDOWN_TICK_MS = 1_000;
+const COUNTDOWN_TICK_MS = 30_000;
 const DETAIL_DEBOUNCE_MS = 300;
+const POLYMARKET_MARKET_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
+const PRICE_HISTORY_INTERVALS: Array<{
+  label: string;
+  value: PriceHistoryInterval;
+}> = [
+  { label: "1m", value: "1m" },
+  { label: "1h", value: "1h" },
+  { label: "6h", value: "6h" },
+  { label: "1D", value: "1d" },
+  { label: "1W", value: "1w" },
+  { label: "Max", value: "max" }
+];
 
 function formatNumber(value: number | null, fractionDigits = 0) {
   if (value === null) {
@@ -80,12 +130,14 @@ function formatPrice(value: number | null) {
   return formatNumber(value, 3);
 }
 
-function formatCents(value: number | null) {
+function formatOrderbookPrice(value: number | null) {
   if (value === null) {
     return "-";
   }
 
-  return `${formatNumber(value * 100, 1)}c`;
+  const cents = value * 100;
+  const rounded = Math.round(cents);
+  return `${Math.abs(cents - rounded) < 0.01 ? rounded : formatNumber(cents, 1)}¢`;
 }
 
 function formatShares(value: number | null) {
@@ -101,35 +153,30 @@ function formatTimestamp(value: string | null) {
     return "-";
   }
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "-";
-  }
-
   return new Intl.DateTimeFormat("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZoneName: "short"
-  }).format(date);
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(new Date(value));
 }
 
-function formatRewardDate(value: string | null) {
-  if (!value) {
-    return "-";
+function formatChartTime(time: Time) {
+  const timestamp =
+    typeof time === "number"
+      ? time
+      : typeof time === "string"
+        ? Date.parse(time) / 1000
+        : Date.UTC(time.year, time.month - 1, time.day) / 1000;
+
+  if (!Number.isFinite(timestamp)) {
+    return "";
   }
 
-  const parts = value.split("-").map((part) => Number(part));
-  if (parts.length === 3 && parts.every((part) => Number.isFinite(part))) {
-    const [year, month, day] = parts;
-    return new Intl.DateTimeFormat("en-US", {
-      dateStyle: "medium"
-    }).format(new Date(year, month - 1, day));
-  }
-
-  return formatTimestamp(value);
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(timestamp * 1000));
 }
 
 function formatDurationFromMs(value: number | null) {
@@ -198,6 +245,27 @@ function rowKey(row: OpportunityRow, mode: DetailMode) {
   return `${mode}:${row.marketId}:${row.tokenId}`;
 }
 
+function toFiniteNumber(value: unknown) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function connectionTone(state: ConnectionState): "neutral" | "green" | "blue" | "red" | "amber" {
+  if (state === "live") {
+    return "green";
+  }
+  if (state === "connecting") {
+    return "blue";
+  }
+  if (state === "reconnecting") {
+    return "amber";
+  }
+  if (state === "stale") {
+    return "red";
+  }
+  return "neutral";
+}
+
 function formatLiveTimeToStart(
   eventStartTime: string | null,
   fallback: string | null,
@@ -224,13 +292,14 @@ function FilterToggle({
   onClick: (value: string) => void;
 }) {
   return (
-    <button
+    <Button
       className={active ? "toggle-chip active" : "toggle-chip"}
       onClick={() => onClick(value)}
       type="button"
+      variant={active ? "secondary" : "ghost"}
     >
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -244,260 +313,576 @@ function MetricCell({
   return (
     <div>
       <span>{label}</span>
-      <strong suppressHydrationWarning>{value}</strong>
+      <strong>{value}</strong>
     </div>
   );
 }
 
-function actionLabel(action: OpportunityDetailPayload["recommendation"]["action"]) {
-  if (action === "place_bid") {
-    return "Place bid";
-  }
-  if (action === "watchlist") {
-    return "Watchlist";
-  }
-  return "Do not place";
-}
-
-function chartY(value: number, minPrice: number, maxPrice: number) {
-  if (maxPrice - minPrice <= 0) {
-    return 210;
-  }
-
-  return 360 - ((value - minPrice) / (maxPrice - minPrice)) * 300;
-}
-
-function clampChartY(value: number) {
-  return Math.max(48, Math.min(372, value));
-}
-
-function MarketPriceDepthChart({ detail }: { detail: OpportunityDetailPayload }) {
-  const { orderBookChart, priceChart } = detail;
-  const history = priceChart.points;
-  const priceAnchors = [
-    priceChart.minPrice,
-    priceChart.maxPrice,
-    detail.recommendation.rewardBandLow,
-    detail.recommendation.rewardBandHigh,
-    detail.recommendation.limitPrice,
-    detail.bestBid,
-    detail.bestAsk,
-    ...orderBookChart.levels.map((level) => level.price)
-  ].filter((value): value is number => value !== null && Number.isFinite(value));
-  const rawMin = priceAnchors.length > 0 ? Math.min(...priceAnchors) : 0;
-  const rawMax = priceAnchors.length > 0 ? Math.max(...priceAnchors) : 1;
-  const padding = Math.max(0.02, (rawMax - rawMin) * 0.12);
-  const minPrice = Math.max(0, rawMin - padding);
-  const maxPrice = Math.min(1, rawMax + padding);
-  const minTimestamp =
-    history.length > 0 ? Math.min(...history.map((point) => point.timestamp)) : 0;
-  const maxTimestamp =
-    history.length > 0 ? Math.max(...history.map((point) => point.timestamp)) : 1;
-  const xForTime = (timestamp: number) => {
-    if (maxTimestamp - minTimestamp <= 0) {
-      return 384;
-    }
-    return 56 + ((timestamp - minTimestamp) / (maxTimestamp - minTimestamp)) * 648;
-  };
-  const historyPath = history
-    .map((point, index) => {
-      const command = index === 0 ? "M" : "L";
-      return `${command}${xForTime(point.timestamp).toFixed(1)},${chartY(
-        point.price,
-        minPrice,
-        maxPrice
-      ).toFixed(1)}`;
+function readBookLevels(message: Record<string, unknown>, side: BookSide) {
+  const key = side === "bids" ? "bids" : "asks";
+  const rawLevels = Array.isArray(message[key]) ? message[key] : [];
+  return rawLevels
+    .map((entry) => {
+      const value = entry as { price?: unknown; size?: unknown };
+      const price = toFiniteNumber(value.price);
+      const size = toFiniteNumber(value.size);
+      if (price === null || size === null) {
+        return null;
+      }
+      return { price, size };
     })
-    .join(" ");
-  const rewardLow = detail.recommendation.rewardBandLow;
-  const rewardHigh = detail.recommendation.rewardBandHigh;
-  const bandTop =
-    rewardHigh === null ? null : clampChartY(chartY(rewardHigh, minPrice, maxPrice));
-  const bandBottom =
-    rewardLow === null ? null : clampChartY(chartY(rewardLow, minPrice, maxPrice));
-  const guideLines = [
-    { label: "Best ask", value: detail.bestAsk, className: "ask-guide" },
-    { label: "Your bid", value: detail.recommendation.limitPrice, className: "bid-guide" },
-    { label: "Best bid", value: detail.bestBid, className: "bid-guide" }
-  ];
-  const callouts = [
-    {
-      label: "Reward band",
-      value:
-        rewardLow === null || rewardHigh === null
-          ? "-"
-          : `${formatCents(rewardLow)} to ${formatCents(rewardHigh)}`,
-      className: "band-callout"
-    },
-    {
-      label: "Your suggested bid",
-      value: formatCents(detail.recommendation.limitPrice),
-      className: "bid-callout"
-    },
-    {
-      label: "Best bid",
-      value: formatCents(detail.bestBid),
-      className: "bid-callout"
-    },
-    {
-      label: "Best ask",
-      value: formatCents(detail.bestAsk),
-      className: "ask-callout"
+    .filter((level): level is BookLevel => level !== null);
+}
+
+function usePolymarketOrderbookStream(
+  tokenId: string,
+  initialDetail: OpportunityDetailPayload | null
+) {
+  const [detail, setDetail] = useState(initialDetail);
+  const [connectionState, setConnectionState] = useState<ConnectionState>("idle");
+  const [lastEventAt, setLastEventAt] = useState<string | null>(null);
+  const [updateCount, setUpdateCount] = useState(0);
+  const [changedLevels, setChangedLevels] = useState<Set<string>>(new Set());
+  const bidsRef = useRef<BookLevel[]>([]);
+  const asksRef = useRef<BookLevel[]>([]);
+
+  useEffect(() => {
+    setDetail(initialDetail);
+    setLastEventAt(null);
+    setUpdateCount(0);
+    setChangedLevels(new Set());
+    bidsRef.current = initialDetail ? levelsFromDepth(initialDetail.depth.bids) : [];
+    asksRef.current = initialDetail ? levelsFromDepth(initialDetail.depth.asks) : [];
+  }, [initialDetail, tokenId]);
+
+  useEffect(() => {
+    if (!initialDetail || !tokenId) {
+      setConnectionState("idle");
+      return;
     }
-  ];
-  const priceTicks = [0, 0.25, 0.5, 0.75, 1].map(
-    (ratio) => minPrice + (maxPrice - minPrice) * ratio
-  );
-  const maxDepth = Math.max(
-    1,
-    orderBookChart.maxBidShares,
-    orderBookChart.maxAskShares
-  );
-  const visibleDepthLevels = orderBookChart.levels.filter(
-    (level) =>
-      level.bidShares > 0 ||
-      level.askShares > 0 ||
-      level.isRewardBand ||
-      level.isSuggestedPrice ||
-      level.isBestBid ||
-      level.isBestAsk ||
-      level.isRewardFloor ||
-      level.isMidpointBoundary
-  );
+
+    let closed = false;
+    let reconnectTimer: number | null = null;
+    let pingTimer: number | null = null;
+    let reconnectAttempt = 0;
+    let socket: WebSocket | null = null;
+
+    function applyLiveDetail(nextChanged: Set<string>, eventTimestamp?: unknown) {
+      const fetchedAt =
+        typeof eventTimestamp === "string" || typeof eventTimestamp === "number"
+          ? new Date(Number(eventTimestamp)).toISOString()
+          : new Date().toISOString();
+      setDetail((current) => {
+        if (!current) {
+          return current;
+        }
+        return deriveLiveDetail(current, bidsRef.current, asksRef.current, fetchedAt);
+      });
+      setLastEventAt(fetchedAt);
+      setUpdateCount((count) => count + 1);
+      setChangedLevels(nextChanged);
+      window.setTimeout(() => setChangedLevels(new Set()), 680);
+    }
+
+    function handleMessage(message: unknown) {
+      const messages = Array.isArray(message) ? message : [message];
+      for (const rawMessage of messages) {
+        if (!rawMessage || typeof rawMessage !== "object") {
+          continue;
+        }
+
+        const event = rawMessage as Record<string, unknown>;
+        const eventType = event.event_type ?? event.type;
+        const changed = new Set<string>();
+
+        if (eventType === "book" && event.asset_id === tokenId) {
+          const bids = readBookLevels(event, "bids");
+          const asks = readBookLevels(event, "asks");
+          if (bids.length > 0) {
+            bidsRef.current = normalizeBookLevels(bids, "bids");
+          }
+          if (asks.length > 0) {
+            asksRef.current = normalizeBookLevels(asks, "asks");
+          }
+          for (const level of [...bids, ...asks]) {
+            changed.add(`${level.price}`);
+          }
+          applyLiveDetail(changed, event.timestamp);
+        }
+
+        if (eventType === "price_change" && Array.isArray(event.price_changes)) {
+          for (const change of event.price_changes as Array<Record<string, unknown>>) {
+            if (change.asset_id !== tokenId) {
+              continue;
+            }
+            const price = toFiniteNumber(change.price);
+            const size = toFiniteNumber(change.size);
+            if (price === null || size === null) {
+              continue;
+            }
+            const side = change.side === "BUY" ? "bids" : "asks";
+            if (side === "bids") {
+              bidsRef.current = applyLevelChange(bidsRef.current, side, price, size);
+            } else {
+              asksRef.current = applyLevelChange(asksRef.current, side, price, size);
+            }
+            changed.add(`${price}`);
+          }
+
+          if (changed.size > 0) {
+            applyLiveDetail(changed, event.timestamp);
+          }
+        }
+
+        if (eventType === "last_trade_price") {
+          const assetId = event.asset_id ?? event.assetId;
+          const price = toFiniteNumber(event.price);
+          if (assetId === tokenId && price !== null) {
+            setDetail((current) => {
+              if (!current) {
+                return current;
+              }
+              const t = Math.floor(Date.now() / 1000);
+              return {
+                ...current,
+                priceHistory: [...current.priceHistory.slice(-160), { t, p: price }]
+              };
+            });
+            applyLiveDetail(new Set(), event.timestamp);
+          }
+        }
+      }
+    }
+
+    function connect() {
+      if (closed) {
+        return;
+      }
+
+      setConnectionState(reconnectAttempt === 0 ? "connecting" : "reconnecting");
+      socket = new WebSocket(POLYMARKET_MARKET_WS);
+
+      socket.onopen = () => {
+        reconnectAttempt = 0;
+        setConnectionState("live");
+        socket?.send(
+          JSON.stringify({
+            type: "market",
+            assets_ids: [tokenId],
+            custom_feature_enabled: true
+          })
+        );
+        pingTimer = window.setInterval(() => {
+          if (socket?.readyState === WebSocket.OPEN) {
+            socket.send("PING");
+          }
+        }, 10_000);
+      };
+
+      socket.onmessage = (event) => {
+        if (event.data === "PONG") {
+          return;
+        }
+        try {
+          handleMessage(JSON.parse(event.data as string));
+        } catch {
+          // Ignore malformed websocket payloads without dropping the stream.
+        }
+      };
+
+      socket.onerror = () => {
+        setConnectionState("reconnecting");
+      };
+
+      socket.onclose = () => {
+        if (pingTimer !== null) {
+          window.clearInterval(pingTimer);
+          pingTimer = null;
+        }
+        if (closed) {
+          return;
+        }
+        reconnectAttempt += 1;
+        setConnectionState(reconnectAttempt > 4 ? "stale" : "reconnecting");
+        reconnectTimer = window.setTimeout(
+          connect,
+          Math.min(12_000, 800 * 2 ** reconnectAttempt)
+        );
+      };
+    }
+
+    connect();
+
+    return () => {
+      closed = true;
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+      }
+      if (pingTimer !== null) {
+        window.clearInterval(pingTimer);
+      }
+      socket?.close();
+    };
+  }, [initialDetail, tokenId]);
+
+  return {
+    detail,
+    connectionState,
+    lastEventAt,
+    updateCount,
+    changedLevels
+  };
+}
+
+function PriceHistoryChart({
+  detail,
+  outcome,
+  interval,
+  onIntervalChange
+}: {
+  detail: OpportunityDetailPayload;
+  outcome: string;
+  interval: PriceHistoryInterval;
+  onIntervalChange: (interval: PriceHistoryInterval) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
+  const rewardFloorSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const rewardCeilingSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const [rewardOverlay, setRewardOverlay] = useState<{
+    top: number;
+    height: number;
+  } | null>(null);
+  const history = detail.priceHistory;
+  const latest = history.at(-1) ?? null;
+
+  function updateRewardOverlay() {
+    const container = containerRef.current;
+    const series = seriesRef.current;
+    if (
+      !container ||
+      !series ||
+      detail.rewardBand.bidLower === null ||
+      detail.rewardBand.askUpper === null
+    ) {
+      setRewardOverlay(null);
+      return;
+    }
+
+    const topCoordinate = series.priceToCoordinate(detail.rewardBand.askUpper * 100);
+    const bottomCoordinate = series.priceToCoordinate(detail.rewardBand.bidLower * 100);
+    if (topCoordinate === null || bottomCoordinate === null) {
+      setRewardOverlay(null);
+      return;
+    }
+
+    const top = Math.max(0, Math.min(topCoordinate, bottomCoordinate));
+    const bottom = Math.min(
+      container.clientHeight,
+      Math.max(topCoordinate, bottomCoordinate)
+    );
+    setRewardOverlay({
+      top,
+      height: Math.max(6, bottom - top)
+    });
+  }
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || history.length === 0) {
+      return;
+    }
+
+    const chart = createChart(container, {
+      autoSize: true,
+      height: 340,
+      layout: {
+        background: { type: ColorType.Solid, color: "transparent" },
+        textColor: "#94a3b8",
+        fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+        fontSize: 12
+      },
+      localization: {
+        timeFormatter: formatChartTime
+      },
+      grid: {
+        vertLines: { color: "rgba(51, 65, 85, 0.16)" },
+        horzLines: {
+          color: "rgba(71, 85, 105, 0.38)",
+          style: LineStyle.Dashed
+        }
+      },
+      crosshair: {
+        vertLine: { color: "rgba(125, 211, 252, 0.32)", width: 1 },
+        horzLine: { color: "rgba(125, 211, 252, 0.32)", width: 1 }
+      },
+      rightPriceScale: {
+        borderColor: "rgba(51, 65, 85, 0.65)",
+        scaleMargins: { top: 0.18, bottom: 0.16 }
+      },
+      timeScale: {
+        borderColor: "rgba(51, 65, 85, 0.65)",
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: formatChartTime
+      }
+    });
+    const areaSeries = chart.addSeries(AreaSeries, {
+      lineColor: "#8ec5ff",
+      lineWidth: 3,
+      topColor: "rgba(56, 189, 248, 0.28)",
+      bottomColor: "rgba(15, 23, 42, 0.02)",
+      priceFormat: {
+        type: "custom",
+        formatter: (price: number) => `${formatNumber(price, 1)}¢`
+      },
+      lastValueVisible: true,
+      priceLineVisible: true,
+      crosshairMarkerVisible: true,
+      crosshairMarkerRadius: 5
+    });
+    const rewardFloorSeries = chart.addSeries(LineSeries, {
+      color: "rgba(125, 211, 252, 0)",
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+      crosshairMarkerVisible: false
+    });
+    const rewardCeilingSeries = chart.addSeries(LineSeries, {
+      color: "rgba(125, 211, 252, 0)",
+      lineWidth: 1,
+      lastValueVisible: false,
+      priceLineVisible: false,
+      crosshairMarkerVisible: false
+    });
+
+    chartRef.current = chart;
+    seriesRef.current = areaSeries;
+    rewardFloorSeriesRef.current = rewardFloorSeries;
+    rewardCeilingSeriesRef.current = rewardCeilingSeries;
+
+    const resizeObserver = new ResizeObserver(() => {
+      chart.applyOptions({ height: container.clientWidth > 980 ? 340 : 280 });
+      chart.timeScale().fitContent();
+      window.requestAnimationFrame(updateRewardOverlay);
+    });
+    resizeObserver.observe(container);
+
+    return () => {
+      resizeObserver.disconnect();
+      chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+      rewardFloorSeriesRef.current = null;
+      rewardCeilingSeriesRef.current = null;
+    };
+  }, [history.length, interval]);
+
+  useEffect(() => {
+    const series = seriesRef.current;
+    const rewardFloorSeries = rewardFloorSeriesRef.current;
+    const rewardCeilingSeries = rewardCeilingSeriesRef.current;
+    const chart = chartRef.current;
+    if (
+      !series ||
+      !rewardFloorSeries ||
+      !rewardCeilingSeries ||
+      !chart ||
+      history.length === 0
+    ) {
+      return;
+    }
+
+    const chartData = history.map((point) => ({
+      time: point.t as Time,
+      value: point.p * 100
+    }));
+    series.setData(chartData);
+    rewardFloorSeries.setData(
+      detail.rewardBand.bidLower === null
+        ? []
+        : chartData.map((point) => ({
+            time: point.time,
+            value: detail.rewardBand.bidLower! * 100
+          }))
+    );
+    rewardCeilingSeries.setData(
+      detail.rewardBand.askUpper === null
+        ? []
+        : chartData.map((point) => ({
+            time: point.time,
+            value: detail.rewardBand.askUpper! * 100
+          }))
+    );
+    chart.timeScale().fitContent();
+    window.requestAnimationFrame(updateRewardOverlay);
+  }, [detail.rewardBand.askUpper, detail.rewardBand.bidLower, history]);
 
   return (
-    <section className="market-chart-card" aria-label="Price chart and reward band">
-      <div className="market-chart-copy">
-        <h3>Price chart and rewarded liquidity</h3>
-        <p>
-          The green band is where your bid can earn rewards. Bars on the right
-          show live shares at each price.
-        </p>
+    <section className="price-history-card market-graph-card">
+      <div className="lp-section-heading">
+        <div>
+          <h3>
+            <BarChart3 size={18} />
+            Market graph
+          </h3>
+          <p>
+            {history.length > 0
+              ? `${
+                  PRICE_HISTORY_INTERVALS.find((option) => option.value === interval)
+                    ?.label ?? interval
+                } price history · browser local time`
+              : "No price history returned"}
+          </p>
+        </div>
+        <div className="chart-range-tabs" aria-label="Price history interval">
+          {PRICE_HISTORY_INTERVALS.map((option) => (
+            <button
+              key={option.value}
+              className={option.value === interval ? "active" : ""}
+              onClick={() => onIntervalChange(option.value)}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <div className="chart-terminal">
+          <span>{outcome}</span>
+          <strong>{formatOrderbookPrice(latest?.p ?? detail.bestBid)}</strong>
+        </div>
       </div>
 
-      <div className="market-chart-wrap">
-        <div className="chart-callouts">
-          {callouts.map((callout) => (
-            <div className={`chart-callout ${callout.className}`} key={callout.label}>
-              <span>{callout.label}</span>
-              <strong>{callout.value}</strong>
+      <div className="price-chart-frame">
+        {history.length === 0 ? (
+          <div className="price-chart-empty">No price history returned</div>
+        ) : (
+          <>
+            {rewardOverlay ? (
+              <div
+                className="chart-reward-overlay"
+                style={{
+                  top: `${rewardOverlay.top}px`,
+                  height: `${rewardOverlay.height}px`
+                }}
+              />
+            ) : null}
+            <div ref={containerRef} className="price-history-canvas" />
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function OrderBookVisualization({
+  detail,
+  changedLevels,
+  connectionState,
+  lastEventAt,
+  updateCount
+}: {
+  detail: OpportunityDetailPayload;
+  changedLevels: Set<string>;
+  connectionState: ConnectionState;
+  lastEventAt: string | null;
+  updateCount: number;
+}) {
+  const askRows = detail.depth.asks.slice(0, 8).reverse();
+  const bidRows = detail.depth.bids.slice(0, 8);
+  const maxDepth = Math.max(
+    1,
+    ...askRows.map((level) => level.cumulativeShares),
+    ...bidRows.map((level) => level.cumulativeShares)
+  );
+  const spread =
+    detail.bestAsk !== null && detail.bestBid !== null
+      ? detail.bestAsk - detail.bestBid
+      : null;
+
+  return (
+    <section className="orderbook-card live-orderbook-card">
+      <div className="lp-section-heading">
+        <div>
+          <h3>
+            <Radio size={18} />
+            Order Book
+          </h3>
+          <p>Streaming public CLOB events. Rewarded prices are highlighted.</p>
+        </div>
+        <div className="book-summary">
+          <Badge tone={connectionTone(connectionState)}>
+            {connectionState === "live" ? <Wifi size={13} /> : <WifiOff size={13} />}
+            {humanize(connectionState)}
+          </Badge>
+          <span>Last: {formatOrderbookPrice(detail.priceHistory.at(-1)?.p ?? detail.bestBid)}</span>
+          <span>Spread: {formatOrderbookPrice(spread)}</span>
+          <span>{updateCount} updates</span>
+          {lastEventAt ? <span>Last event {formatTimestamp(lastEventAt)}</span> : null}
+        </div>
+      </div>
+
+      {askRows.length === 0 && bidRows.length === 0 ? (
+        <p className="detail-empty">No live orderbook depth was returned.</p>
+      ) : (
+        <div className="orderbook-table">
+          <div className="orderbook-row orderbook-header">
+            <div>Price</div>
+            <div>Shares</div>
+            <div>Total</div>
+          </div>
+          {askRows.map((level) => (
+            <div
+              key={`ask-${level.price}-${level.cumulativeShares}`}
+              className={
+                [
+                  "orderbook-row ask-row",
+                  level.inRewardBand ? "is-rewarded" : "",
+                  changedLevels.has(`${level.price}`) ? "is-updating" : "",
+                  level.price === detail.bestAsk ? "is-best" : ""
+                ].join(" ")
+              }
+              style={
+                {
+                  "--depth-width": `${(level.cumulativeShares / maxDepth) * 100}%`
+                } as CSSProperties
+              }
+            >
+              <div className="book-price">{formatOrderbookPrice(level.price)}</div>
+              <div>{formatNumber(level.size, 2)}</div>
+              <div>{formatMoney(level.cumulativeNotional)}</div>
+            </div>
+          ))}
+          <div className="orderbook-spread-row">
+            <span>Last: {formatOrderbookPrice(detail.priceHistory.at(-1)?.p ?? detail.bestBid)}</span>
+            <strong>Spread: {formatOrderbookPrice(spread)}</strong>
+          </div>
+          {bidRows.map((level) => (
+            <div
+              key={`bid-${level.price}-${level.cumulativeShares}`}
+              className={
+                [
+                  "orderbook-row bid-row",
+                  level.inRewardBand ? "is-rewarded" : "",
+                  level.isSuggested ? "is-suggested" : "",
+                  changedLevels.has(`${level.price}`) ? "is-updating" : "",
+                  level.price === detail.bestBid ? "is-best" : ""
+                ].join(" ")
+              }
+              style={
+                {
+                  "--depth-width": `${(level.cumulativeShares / maxDepth) * 100}%`
+                } as CSSProperties
+              }
+            >
+              <div className="book-price">{formatOrderbookPrice(level.price)}</div>
+              <div>{formatNumber(level.size, 2)}</div>
+              <div>{formatMoney(level.cumulativeNotional)}</div>
             </div>
           ))}
         </div>
-
-        <svg className="market-chart" viewBox="0 0 1000 420" role="img">
-          <defs>
-            <linearGradient id="priceLineGradient" x1="0" x2="1" y1="0" y2="0">
-              <stop offset="0%" stopColor="#7ab6ff" />
-              <stop offset="100%" stopColor="#1fc77a" />
-            </linearGradient>
-          </defs>
-
-          <rect className="chart-panel" x="40" y="36" width="900" height="336" rx="8" />
-          <rect className="depth-panel" x="738" y="36" width="202" height="336" rx="8" />
-
-          {priceTicks.map((tick) => {
-            const y = chartY(tick, minPrice, maxPrice);
-            return (
-              <g key={tick}>
-                <line className="chart-grid" x1="56" x2="724" y1={y} y2={y} />
-                <text className="chart-axis-label" x="720" y={y - 6}>
-                  {formatCents(tick)}
-                </text>
-              </g>
-            );
-          })}
-
-          {bandTop !== null && bandBottom !== null && bandBottom > bandTop ? (
-            <>
-              <rect
-                className="chart-reward-band"
-                x="56"
-                y={bandTop}
-                width="668"
-                height={bandBottom - bandTop}
-                rx="6"
-              />
-            </>
-          ) : null}
-
-          {historyPath ? (
-            <path className="chart-price-line" d={historyPath} />
-          ) : (
-            <text className="chart-empty-label" x="340" y="210">
-              No price history returned
-            </text>
-          )}
-
-          {history.length > 0 ? (
-            <circle
-              className="chart-last-dot"
-              cx={xForTime(history[history.length - 1].timestamp)}
-              cy={chartY(history[history.length - 1].price, minPrice, maxPrice)}
-              r="5"
-            />
-          ) : null}
-
-          {guideLines.map((line) => {
-            if (line.value === null) {
-              return null;
-            }
-            const y = chartY(line.value, minPrice, maxPrice);
-            return (
-              <g key={line.label}>
-                <line className={`chart-guide ${line.className}`} x1="56" x2="724" y1={y} y2={y} />
-              </g>
-            );
-          })}
-
-          <line className="depth-divider" x1="738" x2="738" y1="36" y2="372" />
-          <text className="depth-title" x="760" y="58">Live depth</text>
-          <text className="depth-side-label depth-bid-label" x="826" y="78">Bid</text>
-          <text className="depth-side-label depth-ask-label" x="852" y="78">Ask</text>
-
-          {visibleDepthLevels.map((level) => {
-            const y = chartY(level.price, minPrice, maxPrice);
-            const bidWidth = Math.min(84, (level.bidShares / maxDepth) * 84);
-            const askWidth = Math.min(84, (level.askShares / maxDepth) * 84);
-            return (
-              <g key={level.price}>
-                {level.bidShares > 0 ? (
-                  <rect
-                    className="depth-bid"
-                    x={828 - bidWidth}
-                    y={y - 5}
-                    width={Math.max(2, bidWidth)}
-                    height="10"
-                    rx="5"
-                  />
-                ) : null}
-                {level.askShares > 0 ? (
-                  <rect
-                    className="depth-ask"
-                    x="848"
-                    y={y - 5}
-                    width={Math.max(2, askWidth)}
-                    height="10"
-                    rx="5"
-                  />
-                ) : null}
-                {(level.isSuggestedPrice || level.isBestBid || level.isBestAsk || level.isRewardFloor) ? (
-                  <text className="depth-price-label" x="750" y={y + 4}>
-                    {formatCents(level.price)}
-                  </text>
-                ) : null}
-              </g>
-            );
-          })}
-        </svg>
-
-        <div className="chart-legend">
-          <span><i className="legend-price" /> Price history</span>
-          <span><i className="legend-band" /> Reward band</span>
-          <span><i className="legend-bid" /> Bid shares</span>
-          <span><i className="legend-ask" /> Ask shares</span>
-        </div>
-      </div>
+      )}
     </section>
   );
 }
@@ -509,7 +894,9 @@ function LPDetailsPanel({
   loading,
   quoteSizeInput,
   onQuoteSizeChange,
-  defaultQuoteSize
+  defaultQuoteSize,
+  priceHistoryInterval,
+  onPriceHistoryIntervalChange
 }: {
   row: OpportunityRow;
   detail: OpportunityDetailPayload | null;
@@ -518,17 +905,20 @@ function LPDetailsPanel({
   quoteSizeInput: string;
   onQuoteSizeChange: (value: string) => void;
   defaultQuoteSize: number;
+  priceHistoryInterval: PriceHistoryInterval;
+  onPriceHistoryIntervalChange: (interval: PriceHistoryInterval) => void;
 }) {
-  const recommendation = detail?.recommendation ?? null;
-  const action = recommendation?.action ?? "do_not_place";
-  const isReducedSize = recommendation?.isReducedSize ?? false;
+  const streamed = usePolymarketOrderbookStream(row.tokenId, detail);
+  const liveDetail = streamed.detail;
+  const liveStatusLabel =
+    loading && !liveDetail ? "Refreshing live book..." : humanize(streamed.connectionState);
 
   return (
     <section className="lp-panel">
       <div className="lp-panel-toolbar">
         <label className="control lp-quote-control">
-          <span>I want to quote (USDC)</span>
-          <input
+          <span>Quote size (USDC)</span>
+          <Input
             inputMode="decimal"
             value={quoteSizeInput}
             onChange={(event) => onQuoteSizeChange(event.target.value)}
@@ -537,175 +927,154 @@ function LPDetailsPanel({
         </label>
 
         <div className="lp-panel-copy">
-          <span>Outcome</span>
+          <span>Side</span>
           <strong>{row.sideToTrade}</strong>
         </div>
 
         <div className="lp-panel-copy">
-          <span>Book status</span>
-          <strong>{loading ? "Refreshing..." : detail ? "Live book ready" : "Waiting"}</strong>
+          <span>Live status</span>
+          <strong>
+            <span className={`status-dot ${streamed.connectionState}`} />
+            {liveStatusLabel}
+          </strong>
         </div>
       </div>
 
       {error ? <p className="error-banner panel-banner">{error}</p> : null}
 
-      {detail ? (
+      {liveDetail ? (
         <>
-          <section className={`recommendation-card action-${action}`}>
-            <div className="recommendation-main">
-              <span className="action-badge">{actionLabel(action)}</span>
-              <div>
-                <h3>Order recommendation</h3>
-                <p>{recommendation?.reason}</p>
-              </div>
-            </div>
+          <p className="panel-note">
+            Live book fetched {formatTimestamp(liveDetail.fetchedAt)}. Ranked snapshot
+            was published {formatTimestamp(liveDetail.snapshotGeneratedAt)}.
+          </p>
 
-            <div className="recommendation-metrics">
-              <div className="recommendation-metric">
-                <span>Suggested size</span>
-                <strong>{formatMoney(recommendation?.notional ?? null)}</strong>
-              </div>
-              <div className="recommendation-metric">
-                <span>Estimated APR</span>
-                <strong>{formatPercent(recommendation?.estimatedApr ?? null)}</strong>
-              </div>
-              <div className="recommendation-metric">
-                <span>Reward / day</span>
-                <strong>
-                  {formatMoney(recommendation?.estimatedRewardPerDay ?? null)}
-                </strong>
-              </div>
-              <div className="recommendation-metric">
-                <span>Until reward end</span>
-                <strong>
-                  {formatMoney(recommendation?.estimatedRewardUntilEnd ?? null)}
-                </strong>
-              </div>
-            </div>
-          </section>
+          <PriceHistoryChart
+            detail={liveDetail}
+            interval={priceHistoryInterval}
+            onIntervalChange={onPriceHistoryIntervalChange}
+            outcome={row.sideToTrade}
+          />
+          <OrderBookVisualization
+            detail={liveDetail}
+            changedLevels={streamed.changedLevels}
+            connectionState={streamed.connectionState}
+            lastEventAt={streamed.lastEventAt}
+            updateCount={streamed.updateCount}
+          />
 
-          <section className="order-ticket">
-            <div>
-              <h3>{isReducedSize ? "Smaller order to consider" : "Order to place"}</h3>
-              <p className="panel-note">
-                {isReducedSize
-                  ? `Your ${formatMoney(
-                      recommendation?.requestedNotional ?? null
-                    )} quote is too large for the current queue. This smaller size targets the queue rule now.`
-                  : "Keep the order open only while it remains inside the reward band."}
-              </p>
-            </div>
-            <div className="ticket-grid">
-              <div className="ticket-row">
-                <span>Buy</span>
-                <strong>{recommendation?.orderSide ?? row.sideToTrade}</strong>
-              </div>
-              <div className="ticket-row">
-                <span>Limit price</span>
-                <strong>{formatCents(recommendation?.limitPrice ?? null)}</strong>
-              </div>
-              <div className="ticket-row">
-                <span>Shares</span>
-                <strong>{formatShares(recommendation?.shares ?? null)}</strong>
-              </div>
-              <div className="ticket-row">
-                <span>{isReducedSize ? "Suggested cost" : "Estimated cost"}</span>
-                <strong>{formatMoney(recommendation?.notional ?? null)}</strong>
-              </div>
-            </div>
-          </section>
-
-          <MarketPriceDepthChart detail={detail} />
-
-          <div className="detail-sections lp-detail-sections">
-            <section className="detail-card compact-detail-card">
-              <h3>Live book</h3>
-              <div className="detail-grid">
-                <MetricCell label="Best bid" value={formatCents(detail.bestBid)} />
-                <MetricCell label="Best ask" value={formatCents(detail.bestAsk)} />
-                <MetricCell
-                  label="Midpoint"
-                  value={formatCents(detail.adjustedMidpoint)}
-                />
-                <MetricCell
-                  label="Spread"
-                  value={formatMultiple(detail.spreadRatio)}
-                />
-              </div>
-            </section>
-
-            <section className="detail-card compact-detail-card">
+          <div className="detail-sections">
+            <Card className="detail-card">
               <h3>Reward rules</h3>
               <div className="detail-grid">
                 <MetricCell
-                  label="Market reward / day"
+                  label="Reward / day"
                   value={formatMoney(row.rewardDailyRate)}
                 />
                 <MetricCell
                   label="Max spread"
-                  value={`${formatNumber(detail.rewardsMaxSpread, 2)}c`}
+                  value={`${formatNumber(liveDetail.rewardsMaxSpread, 2)}c`}
                 />
                 <MetricCell
                   label="Min shares"
-                  value={formatShares(detail.rewardsMinSize)}
+                  value={formatShares(liveDetail.rewardsMinSize)}
                 />
                 <MetricCell
-                  label="Reward ends"
-                  value={formatRewardDate(detail.rewardEndDate)}
+                  label="Bid reward band"
+                  value={
+                    liveDetail.rewardBand.bidLower === null ||
+                    liveDetail.rewardBand.midpoint === null
+                      ? "-"
+                      : `${formatOrderbookPrice(
+                          liveDetail.rewardBand.bidLower
+                        )} to ${formatOrderbookPrice(liveDetail.rewardBand.midpoint)}`
+                  }
+                />
+                <MetricCell
+                  label="Ask reward band"
+                  value={
+                    liveDetail.rewardBand.midpoint === null ||
+                    liveDetail.rewardBand.askUpper === null
+                      ? "-"
+                      : `${formatOrderbookPrice(
+                          liveDetail.rewardBand.midpoint
+                        )} to ${formatOrderbookPrice(liveDetail.rewardBand.askUpper)}`
+                  }
+                />
+                <MetricCell
+                  label="Spread x"
+                  value={formatMultiple(liveDetail.spreadRatio)}
                 />
               </div>
-            </section>
-          </div>
+            </Card>
 
-          <section className="detail-card compact-detail-card">
-            <h3>Reward estimate</h3>
-            <div className="detail-grid">
-              <MetricCell
-                label="Queue ahead"
-                value={formatShares(detail.queueAheadShares)}
-              />
-              <MetricCell
-                label="Queue x"
-                value={formatMultiple(detail.queueMultiple)}
-              />
-              <MetricCell
-                label="Max current size"
-                value={formatMoney(recommendation?.queueSupportedNotional ?? null)}
-              />
-              <MetricCell
-                label="Min qualifying cost"
-                value={formatMoney(detail.minimumQualifyingUsdc)}
-              />
-              <MetricCell
-                label="Reward band"
-                value={
-                  recommendation?.rewardBandLow === null ||
-                  recommendation?.rewardBandHigh === null
-                    ? "-"
-                    : `${formatCents(recommendation?.rewardBandLow ?? null)} to ${formatCents(
-                        recommendation?.rewardBandHigh ?? null
-                      )}`
-                }
-              />
-              <MetricCell
-                label="Live book fetched"
-                value={formatTimestamp(detail.fetchedAt)}
-              />
-              <MetricCell
-                label="Snapshot ranked"
-                value={formatTimestamp(detail.snapshotGeneratedAt)}
-              />
-            </div>
-            <p className="panel-note">
-              Estimates use the current live order book and the latest ranked snapshot.
-              They are not guaranteed if the queue or reward rules change.
-            </p>
-          </section>
+            <Card className="detail-card">
+              <h3>Your quote</h3>
+              <div className="detail-grid">
+                <MetricCell
+                  label="Suggested price"
+                  value={formatPrice(liveDetail.suggestedPrice)}
+                />
+                <MetricCell label="Your shares" value={formatShares(liveDetail.ownShares)} />
+                <MetricCell
+                  label="Min qualifying quote"
+                  value={formatMoney(liveDetail.minimumQualifyingUsdc)}
+                />
+                <MetricCell
+                  label="Distance to ask"
+                  value={formatPrice(liveDetail.distanceToAsk)}
+                />
+                <MetricCell
+                  label="Queue ahead"
+                  value={formatShares(liveDetail.queueAheadShares)}
+                />
+                <MetricCell
+                  label="Queue ahead notional"
+                  value={formatMoney(liveDetail.queueAheadNotional)}
+                />
+                <MetricCell
+                  label="Queue x"
+                  value={formatMultiple(liveDetail.queueMultiple)}
+                />
+                <MetricCell
+                  label="Qualifying depth"
+                  value={formatShares(liveDetail.qualifyingDepthShares)}
+                />
+              </div>
+            </Card>
+
+            <Card className="detail-card">
+              <h3>Estimated rewards</h3>
+              <div className="detail-grid">
+                <MetricCell
+                  label="APR ceiling"
+                  value={formatPercent(liveDetail.aprCeiling)}
+                />
+                <MetricCell label="Raw APR" value={formatPercent(liveDetail.rawApr)} />
+                <MetricCell
+                  label="Effective APR"
+                  value={formatPercent(liveDetail.effectiveApr)}
+                />
+                <MetricCell
+                  label="Pricing zone"
+                  value={liveDetail.pricingZone ? humanize(liveDetail.pricingZone) : "-"}
+                />
+                <MetricCell
+                  label="Live status"
+                  value={humanize(liveDetail.status)}
+                />
+                <MetricCell
+                  label="Live reason"
+                  value={humanize(liveDetail.reason)}
+                />
+              </div>
+            </Card>
+          </div>
         </>
       ) : loading ? (
-        <p className="info-banner panel-banner">Loading live order recommendation...</p>
+        <p className="info-banner panel-banner">Loading live LP diagnostics...</p>
       ) : (
-        <p className="detail-empty">No live recommendation available for this row.</p>
+        <p className="detail-empty">No live diagnostics available for this row.</p>
       )}
     </section>
   );
@@ -722,7 +1091,9 @@ function ScannerRowCard({
   detailLoading,
   quoteSizeInput,
   onQuoteSizeChange,
-  defaultQuoteSize
+  defaultQuoteSize,
+  priceHistoryInterval,
+  onPriceHistoryIntervalChange
 }: {
   row: OpportunityRow;
   displayedApr: number | null;
@@ -735,6 +1106,8 @@ function ScannerRowCard({
   quoteSizeInput: string;
   onQuoteSizeChange: (value: string) => void;
   defaultQuoteSize: number;
+  priceHistoryInterval: PriceHistoryInterval;
+  onPriceHistoryIntervalChange: (interval: PriceHistoryInterval) => void;
 }) {
   const question = row.marketUrl ? (
     <a
@@ -750,7 +1123,7 @@ function ScannerRowCard({
   );
 
   return (
-    <article className="market-row">
+    <Card className="market-row">
       <div className="market-visual">
         {row.image ? (
           <img src={row.image} alt="" loading="lazy" />
@@ -770,7 +1143,9 @@ function ScannerRowCard({
 
           <div className="tag-list">
             {row.tags.slice(0, 4).map((tag) => (
-              <span key={`${row.marketId}-${tag}`}>{tag}</span>
+              <Badge key={`${row.marketId}-${tag}`} tone="green">
+                {tag}
+              </Badge>
             ))}
           </div>
         </div>
@@ -792,13 +1167,15 @@ function ScannerRowCard({
         </div>
 
         <div className="market-actions">
-          <button
+          <Button
             className={expanded ? "detail-button active" : "detail-button"}
             onClick={onToggle}
             type="button"
+            variant={expanded ? "secondary" : "default"}
           >
+            <Activity size={16} />
             {expanded ? "Hide LP details" : "LP details"}
-          </button>
+          </Button>
           {row.marketUrl ? (
             <a
               className="market-open-link"
@@ -806,6 +1183,7 @@ function ScannerRowCard({
               rel="noreferrer"
               target="_blank"
             >
+              <ExternalLink size={15} />
               Open on Polymarket
             </a>
           ) : null}
@@ -820,10 +1198,12 @@ function ScannerRowCard({
             quoteSizeInput={quoteSizeInput}
             onQuoteSizeChange={onQuoteSizeChange}
             defaultQuoteSize={defaultQuoteSize}
+            priceHistoryInterval={priceHistoryInterval}
+            onPriceHistoryIntervalChange={onPriceHistoryIntervalChange}
           />
         ) : null}
       </div>
-    </article>
+    </Card>
   );
 }
 
@@ -846,6 +1226,8 @@ export function LiveDashboard({
 
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [quoteSizeInput, setQuoteSizeInput] = useState("");
+  const [priceHistoryInterval, setPriceHistoryInterval] =
+    useState<PriceHistoryInterval>("6h");
   const [detailState, setDetailState] = useState<DetailState>({
     key: null,
     loading: false,
@@ -910,7 +1292,6 @@ export function LiveDashboard({
   }, []);
 
   const meta = scanner?.meta ?? null;
-  const availableTags = scanner?.availableTags ?? [];
   const activeScannerRows = twoSided
     ? scanner?.twoSided.rows ?? []
     : scanner?.singleSided.rows ?? [];
@@ -921,6 +1302,19 @@ export function LiveDashboard({
   const hasAnyData =
     (scanner?.singleSided.rows.length ?? 0) > 0 ||
     (scanner?.twoSided.rows.length ?? 0) > 0;
+  const visibleTags = useMemo(
+    () =>
+      Array.from(new Set(activeScannerRows.flatMap((row) => row.tags))).sort((left, right) =>
+        left.localeCompare(right)
+      ),
+    [activeScannerRows]
+  );
+
+  useEffect(() => {
+    if (scannerTag && !visibleTags.includes(scannerTag)) {
+      setScannerTag("");
+    }
+  }, [scannerTag, visibleTags]);
 
   const filteredScannerRows = useMemo(() => {
     const query = scannerSearch.trim().toLowerCase();
@@ -1035,7 +1429,8 @@ export function LiveDashboard({
           marketId: expandedRow.marketId,
           tokenId: expandedRow.tokenId,
           mode: detailMode,
-          quoteSizeUsdc: String(parsedQuoteSize)
+          quoteSizeUsdc: String(parsedQuoteSize),
+          interval: priceHistoryInterval
         });
         const response = await fetch(`/api/opportunity-detail?${params.toString()}`, {
           cache: "no-store",
@@ -1075,7 +1470,7 @@ export function LiveDashboard({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [detailMode, expandedRow, meta, parsedQuoteSize]);
+  }, [detailMode, expandedRow, meta, parsedQuoteSize, priceHistoryInterval]);
 
   const staleMessage = meta?.warning
     ? `Snapshot published ${formatTimestamp(meta.generatedAt)} (${formatDurationFromMs(
@@ -1106,31 +1501,34 @@ export function LiveDashboard({
         <div className="filter-grid">
           <label className="control control-wide">
             <span>Search</span>
-            <input
+            <div className="input-with-icon">
+              <Search size={16} />
+              <Input
               value={scannerSearch}
               onChange={(event) => setScannerSearch(event.target.value)}
               placeholder="Question, side, status, reason, tag"
-            />
+              />
+            </div>
           </label>
 
           <label className="control">
             <span>Tag</span>
-            <select
+            <Select
               value={scannerTag}
               onChange={(event) => setScannerTag(event.target.value)}
             >
               <option value="">All tags</option>
-              {availableTags.map((tag) => (
+              {visibleTags.map((tag) => (
                 <option key={tag} value={tag}>
                   {tag}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
 
           <label className="control">
             <span>Min APR</span>
-            <input
+            <Input
               inputMode="decimal"
               value={minApr}
               onChange={(event) => setMinApr(event.target.value)}
@@ -1140,7 +1538,7 @@ export function LiveDashboard({
 
           <label className="control">
             <span>Sort</span>
-            <select
+            <Select
               value={scannerSort}
               onChange={(event) => setScannerSort(event.target.value as ScannerSort)}
             >
@@ -1151,12 +1549,12 @@ export function LiveDashboard({
               <option value="soonest">Soonest</option>
               <option value="queueMultiple">Queue x</option>
               <option value="spreadRatio">Tightest spread</option>
-            </select>
+            </Select>
           </label>
 
           <label className="control control-select">
             <span>Rows</span>
-            <select
+            <Select
               value={scannerRows}
               onChange={(event) => setScannerRows(Number(event.target.value))}
             >
@@ -1164,7 +1562,7 @@ export function LiveDashboard({
               <option value={40}>40</option>
               <option value={80}>80</option>
               <option value={120}>120</option>
-            </select>
+            </Select>
           </label>
         </div>
 
@@ -1255,6 +1653,8 @@ export function LiveDashboard({
               quoteSizeInput={quoteSizeInput}
               onQuoteSizeChange={setQuoteSizeInput}
               defaultQuoteSize={defaultQuoteSize}
+              priceHistoryInterval={priceHistoryInterval}
+              onPriceHistoryIntervalChange={setPriceHistoryInterval}
             />
           );
         })}

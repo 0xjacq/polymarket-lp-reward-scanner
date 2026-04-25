@@ -1,5 +1,5 @@
 [package]
-name = "polymarket-lp-reward-scanner"
+name = "napolyrewardfarmor"
 version = "0.1.0"
 edition = "2021"
 

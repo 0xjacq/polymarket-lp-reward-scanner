@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Utc};
 use polymarket_client_sdk::types::{dec, Decimal, U256};
 
 use crate::config;
@@ -21,8 +21,6 @@ struct TokenDecision {
     reward_daily_rate: Decimal,
     rewards_max_spread: Decimal,
     rewards_min_size: Decimal,
-    reward_start_date: Option<NaiveDate>,
-    reward_end_date: Option<NaiveDate>,
     pricing_zone: Option<PricingZone>,
     market_competitiveness: Option<Decimal>,
     spread_ratio: Option<Decimal>,
@@ -129,8 +127,6 @@ fn inspect_token(
         reward_daily_rate: eligible.reward.reward_daily_rate,
         rewards_max_spread: eligible.reward.rewards_max_spread,
         rewards_min_size: eligible.reward.rewards_min_size,
-        reward_start_date: eligible.reward.reward_start_date,
-        reward_end_date: eligible.reward.reward_end_date,
         pricing_zone: None,
         market_competitiveness,
         spread_ratio: None,
@@ -637,8 +633,6 @@ fn to_opportunity(candidate: TokenDecision) -> Opportunity {
         reward_daily_rate: candidate.reward_daily_rate,
         rewards_max_spread: candidate.rewards_max_spread,
         rewards_min_size: candidate.rewards_min_size,
-        reward_start_date: candidate.reward_start_date,
-        reward_end_date: candidate.reward_end_date,
         pricing_zone: candidate.pricing_zone,
         market_competitiveness: candidate.market_competitiveness,
         spread_ratio: candidate.spread_ratio,
@@ -689,8 +683,6 @@ mod tests {
                 reward_daily_rate: dec!(5),
                 rewards_min_size: dec!(50),
                 rewards_max_spread: dec!(3.5),
-                reward_start_date: None,
-                reward_end_date: None,
                 market_competitiveness: Some(dec!(1)),
             },
             market: MarketSnapshot {
@@ -794,8 +786,6 @@ mod tests {
                 reward_daily_rate: dec!(1),
                 rewards_min_size: dec!(10),
                 rewards_max_spread: dec!(3),
-                reward_start_date: None,
-                reward_end_date: None,
                 market_competitiveness: Some(dec!(1)),
             },
             RewardProgram {
@@ -803,8 +793,6 @@ mod tests {
                 reward_daily_rate: dec!(1),
                 rewards_min_size: dec!(10),
                 rewards_max_spread: dec!(3),
-                reward_start_date: None,
-                reward_end_date: None,
                 market_competitiveness: Some(dec!(2)),
             },
             RewardProgram {
@@ -812,8 +800,6 @@ mod tests {
                 reward_daily_rate: dec!(1),
                 rewards_min_size: dec!(10),
                 rewards_max_spread: dec!(3),
-                reward_start_date: None,
-                reward_end_date: None,
                 market_competitiveness: Some(dec!(100)),
             },
         ];

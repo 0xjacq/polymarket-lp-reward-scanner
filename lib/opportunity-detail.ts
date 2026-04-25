@@ -1,4 +1,9 @@
 import type { OpportunityRow, SnapshotMeta } from "@/lib/snapshot";
+import {
+  buildAskDepth,
+  buildBidDepth,
+  type BookLevel
+} from "@/lib/orderbook-utils";
 
 const CLOB_BOOK_URL = "https://clob.polymarket.com/book";
 const CLOB_PRICE_HISTORY_URL = "https://clob.polymarket.com/prices-history";
@@ -7,6 +12,7 @@ const EPSILON = 1e-9;
 
 export type DetailMode = "single" | "two";
 export type DetailPricingZone = "neutral" | "extreme";
+export type PriceHistoryInterval = "1m" | "1h" | "6h" | "1d" | "1w" | "max";
 
 type RawLevel = {
   price?: unknown;
@@ -20,65 +26,27 @@ type LiveBookResponse = {
   timestamp?: unknown;
 };
 
-type RawPriceHistoryPoint = {
-  t?: unknown;
-  p?: unknown;
-};
-
 type PriceHistoryResponse = {
-  history?: RawPriceHistoryPoint[];
-};
-
-type BookLevel = {
-  price: number;
-  size: number;
-};
-
-export type OpportunityPriceHistoryPoint = {
-  timestamp: number;
-  price: number;
+  history?: Array<{
+    t?: unknown;
+    p?: unknown;
+  }>;
 };
 
 export type OpportunityDetailDepthLevel = {
   price: number;
   size: number;
   cumulativeShares: number;
+  cumulativeNotional: number;
   queueAheadShares: number;
   inBand: boolean;
+  inRewardBand: boolean;
   isSuggested: boolean;
-  role: "queue_ahead" | "below_order" | "outside_band";
-  note: string;
 };
 
-export type OpportunityOrderBookChartLevel = {
-  price: number;
-  bidShares: number;
-  askShares: number;
-  bidNotional: number;
-  askNotional: number;
-  bidCumulativeShares: number;
-  askCumulativeShares: number;
-  isRewardBand: boolean;
-  isSuggestedPrice: boolean;
-  isBestBid: boolean;
-  isBestAsk: boolean;
-  isMidpointBoundary: boolean;
-  isRewardFloor: boolean;
-};
-
-export type OpportunityOrderBookChart = {
-  levels: OpportunityOrderBookChartLevel[];
-  maxBidShares: number;
-  maxAskShares: number;
-  displayMinPrice: number;
-  displayMaxPrice: number;
-};
-
-export type OpportunityPriceChart = {
-  points: OpportunityPriceHistoryPoint[];
-  minPrice: number | null;
-  maxPrice: number | null;
-  interval: "1d" | "1w";
+export type OpportunityDetailPricePoint = {
+  t: number;
+  p: number;
 };
 
 export type OpportunityDetailPayload = {
@@ -103,43 +71,24 @@ export type OpportunityDetailPayload = {
   aprCeiling: number | null;
   rawApr: number | null;
   effectiveApr: number | null;
-  estimatedRewardPerDay: number | null;
-  estimatedRewardUntilEnd: number | null;
-  rewardStartDate: string | null;
-  rewardEndDate: string | null;
-  rewardDaysRemaining: number | null;
-  eventEndTime: string | null;
   spreadRatio: number | null;
   distanceToAsk: number | null;
   pricingZone: DetailPricingZone | null;
   status: string;
   reason: string;
-  recommendation: OpportunityRecommendation;
-  orderBookChart: OpportunityOrderBookChart;
-  priceChart: OpportunityPriceChart;
+  rewardBand: {
+    bidLower: number | null;
+    midpoint: number | null;
+    askUpper: number | null;
+    maxSpread: number;
+  };
+  priceHistory: OpportunityDetailPricePoint[];
   depth: {
+    asks: OpportunityDetailDepthLevel[];
     bids: OpportunityDetailDepthLevel[];
     scaleMin: number;
     scaleMax: number;
   };
-};
-
-export type OpportunityRecommendation = {
-  action: "place_bid" | "watchlist" | "do_not_place";
-  title: string;
-  reason: string;
-  orderSide: string;
-  limitPrice: number | null;
-  shares: number | null;
-  requestedNotional: number;
-  notional: number;
-  queueSupportedNotional: number | null;
-  isReducedSize: boolean;
-  estimatedApr: number | null;
-  estimatedRewardPerDay: number | null;
-  estimatedRewardUntilEnd: number | null;
-  rewardBandLow: number | null;
-  rewardBandHigh: number | null;
 };
 
 function toNumber(value: unknown): number | null {
@@ -172,31 +121,6 @@ function normalizeLevels(value: unknown, side: "bids" | "asks"): BookLevel[] {
     side === "bids" ? right.price - left.price : left.price - right.price
   );
   return levels;
-}
-
-function normalizeHistory(value: unknown): OpportunityPriceHistoryPoint[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((entry) => {
-      const point = entry as RawPriceHistoryPoint;
-      const timestamp = toNumber(point.t);
-      const price = toNumber(point.p);
-      if (
-        timestamp === null ||
-        price === null ||
-        timestamp <= 0 ||
-        price < 0 ||
-        price > 1
-      ) {
-        return null;
-      }
-      return { timestamp, price };
-    })
-    .filter((point): point is OpportunityPriceHistoryPoint => point !== null)
-    .sort((left, right) => left.timestamp - right.timestamp);
 }
 
 function stepPrecision(step: number) {
@@ -332,227 +256,6 @@ function toPricingZone(midpoint: number): DetailPricingZone {
   return midpoint >= 0.1 && midpoint <= 0.9 ? "neutral" : "extreme";
 }
 
-function compactDepth(
-  bids: BookLevel[],
-  rewardFloorPrice: number | null,
-  adjustedMidpointPrice: number | null,
-  suggestedPrice: number | null
-): OpportunityDetailDepthLevel[] {
-  let cumulative = 0;
-  const focused = bids
-    .filter((level) => {
-      if (rewardFloorPrice === null || adjustedMidpointPrice === null) {
-        return true;
-      }
-      return (
-        level.price >= rewardFloorPrice - 0.03 - EPSILON &&
-        level.price <= adjustedMidpointPrice + 0.03 + EPSILON
-      );
-    })
-    .slice(0, 12);
-  const visible = focused.length > 0 ? focused : bids.slice(0, 8);
-
-  return visible.map((level) => {
-    cumulative += level.size;
-    const inBand =
-      rewardFloorPrice !== null &&
-      adjustedMidpointPrice !== null &&
-      level.price >= rewardFloorPrice - EPSILON &&
-      level.price < adjustedMidpointPrice - EPSILON;
-    const isQueueAhead =
-      suggestedPrice !== null && level.price >= suggestedPrice - EPSILON;
-    const role: OpportunityDetailDepthLevel["role"] = inBand
-      ? isQueueAhead
-        ? "queue_ahead"
-        : "below_order"
-      : "outside_band";
-    return {
-      price: level.price,
-      size: level.size,
-      cumulativeShares: cumulative,
-      queueAheadShares:
-        suggestedPrice === null || level.price + EPSILON < suggestedPrice
-          ? 0
-          : cumulative,
-      inBand,
-      isSuggested:
-        suggestedPrice !== null && Math.abs(level.price - suggestedPrice) < EPSILON,
-      role,
-      note:
-        role === "queue_ahead"
-          ? "Ahead of your order"
-          : role === "below_order"
-            ? "Below your order"
-            : "Outside reward band"
-    };
-  });
-}
-
-function daysRemaining(endDate: string | null) {
-  if (!endDate) {
-    return null;
-  }
-  const parts = endDate.split("-").map((part) => Number(part));
-  if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) {
-    return null;
-  }
-  const [year, month, day] = parts;
-  const endExclusive = Date.UTC(year, month - 1, day + 1);
-  const remainingMs = endExclusive - Date.now();
-  if (remainingMs <= 0) {
-    return 0;
-  }
-  return Math.ceil(remainingMs / 86_400_000);
-}
-
-function formatCurrencyInput(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 0,
-    minimumFractionDigits: 0
-  }).format(value);
-}
-
-function recommendationReason(input: {
-  status: string;
-  reason: string;
-  quoteSizeUsdc: number;
-  queueMultiple: number | null;
-  minQueueMultiple: number;
-  queueSupportedNotional: number | null;
-  suggestedNotional: number;
-  minimumQualifyingUsdc: number | null;
-  canSuggestReducedSize: boolean;
-}) {
-  const {
-    status,
-    reason,
-    quoteSizeUsdc,
-    queueMultiple,
-    minQueueMultiple,
-    queueSupportedNotional,
-    suggestedNotional,
-    minimumQualifyingUsdc,
-    canSuggestReducedSize
-  } = input;
-  if (status === "candidate_now") {
-    return "Inside the reward band with enough queue ahead at the current book.";
-  }
-  if (reason === "queue_too_thin") {
-    if (canSuggestReducedSize && queueSupportedNotional !== null) {
-      return `Queue is too thin for $${formatCurrencyInput(quoteSizeUsdc)}. Use about $${formatCurrencyInput(suggestedNotional)} at the suggested price, or wait for more queue.`;
-    }
-    if (queueSupportedNotional !== null) {
-      const minimumText =
-        minimumQualifyingUsdc !== null
-          ? `, below the minimum qualifying cost of $${formatCurrencyInput(minimumQualifyingUsdc)}`
-          : "";
-      return `Queue only supports about $${formatCurrencyInput(queueSupportedNotional)} right now${minimumText}. Wait for more queue before placing $${formatCurrencyInput(quoteSizeUsdc)}.`;
-    }
-    return `Queue is too thin for $${formatCurrencyInput(quoteSizeUsdc)}: ${queueMultiple?.toFixed(2) ?? "0.00"}x visible versus ${minQueueMultiple.toFixed(2)}x required.`;
-  }
-  if (reason === "spread_too_large") {
-    return "The market spread is currently wider than the reward band.";
-  }
-  if (reason === "quote_too_small_for_min_shares") {
-    return "This quote size is too small to meet the minimum rewarded shares.";
-  }
-  if (reason === "reward_rules_unavailable") {
-    return "Reward rules are unavailable for this row, so the app cannot compute a rewarded order.";
-  }
-  return "Current live book does not produce a clean rewarded order.";
-}
-
-function recommendationTitle(status: string) {
-  if (status === "candidate_now") {
-    return "Place bid";
-  }
-  if (status === "watchlist") {
-    return "Watchlist";
-  }
-  return "Do not place";
-}
-
-function recommendationAction(
-  status: string
-): OpportunityRecommendation["action"] {
-  if (status === "candidate_now") {
-    return "place_bid";
-  }
-  if (status === "watchlist") {
-    return "watchlist";
-  }
-  return "do_not_place";
-}
-
-function estimateQuote(input: {
-  notional: number;
-  suggestedPrice: number | null;
-  midpoint: number | null;
-  spreadBand: number;
-  rewardFloorPrice: number | null;
-  bids: BookLevel[];
-  rewardDailyRate: number;
-  pricingZone: DetailPricingZone | null;
-  mode: DetailMode;
-}) {
-  const {
-    notional,
-    suggestedPrice,
-    midpoint,
-    spreadBand,
-    rewardFloorPrice,
-    bids,
-    rewardDailyRate,
-    pricingZone,
-    mode
-  } = input;
-
-  if (
-    !(notional > 0) ||
-    suggestedPrice === null ||
-    midpoint === null ||
-    rewardFloorPrice === null ||
-    pricingZone === null
-  ) {
-    return {
-      ownShares: null,
-      aprCeiling: null,
-      rawApr: null,
-      effectiveApr: null
-    };
-  }
-
-  const ownShares = notional / suggestedPrice;
-  const ourScore = scoreWeight(spreadBand, midpoint - suggestedPrice);
-  const bookVisibleWeight = visibleWeight(
-    bids,
-    midpoint,
-    spreadBand,
-    rewardFloorPrice
-  );
-  const ourWeight = ourScore === null ? null : ownShares * ourScore;
-  const denominator = ourWeight === null ? null : ourWeight + bookVisibleWeight;
-
-  if (ourWeight === null || denominator === null || denominator <= 0) {
-    return {
-      ownShares,
-      aprCeiling: null,
-      rawApr: null,
-      effectiveApr: null
-    };
-  }
-
-  const aprCeiling = rewardDailyRate * 36500 / notional;
-  const rawApr =
-    rewardDailyRate * (ourWeight / denominator) * 36500 / notional;
-  return {
-    ownShares,
-    aprCeiling,
-    rawApr,
-    effectiveApr: effectiveApr(rawApr, pricingZone, mode)
-  };
-}
-
 function scaleBounds(values: Array<number | null>) {
   const numeric = values.filter((value): value is number => value !== null);
   if (numeric.length === 0) {
@@ -569,128 +272,6 @@ function scaleBounds(values: Array<number | null>) {
     };
   }
   return { scaleMin: min, scaleMax: max };
-}
-
-function samePrice(left: number | null, right: number | null) {
-  return left !== null && right !== null && Math.abs(left - right) < EPSILON;
-}
-
-function levelSizeAt(levels: BookLevel[], price: number) {
-  return levels
-    .filter((level) => samePrice(level.price, price))
-    .reduce((acc, level) => acc + level.size, 0);
-}
-
-function cumulativeBidSharesAt(levels: BookLevel[], price: number) {
-  return levels
-    .filter((level) => level.price >= price - EPSILON)
-    .reduce((acc, level) => acc + level.size, 0);
-}
-
-function cumulativeAskSharesAt(levels: BookLevel[], price: number) {
-  return levels
-    .filter((level) => level.price <= price + EPSILON)
-    .reduce((acc, level) => acc + level.size, 0);
-}
-
-function buildTickRange(minPrice: number, maxPrice: number, tickSize: number) {
-  const levels: number[] = [];
-  if (!(tickSize > 0) || maxPrice < minPrice) {
-    return levels;
-  }
-
-  for (
-    let price = maxPrice, guard = 0;
-    price >= minPrice - EPSILON && guard < 60;
-    price = roundToTick(price - tickSize, tickSize), guard += 1
-  ) {
-    levels.push(price);
-  }
-  return levels;
-}
-
-function buildOrderBookChart(input: {
-  bids: BookLevel[];
-  asks: BookLevel[];
-  tickSize: number;
-  rewardFloorPrice: number | null;
-  midpoint: number | null;
-  suggestedPrice: number | null;
-  bestBid: number | null;
-  bestAsk: number | null;
-}): OpportunityOrderBookChart {
-  const {
-    bids,
-    asks,
-    tickSize,
-    rewardFloorPrice,
-    midpoint,
-    suggestedPrice,
-    bestBid,
-    bestAsk
-  } = input;
-  const fallbackPrices = [...bids.slice(0, 4), ...asks.slice(0, 4)].map(
-    (level) => level.price
-  );
-  const anchorPrices = [
-    rewardFloorPrice,
-    midpoint,
-    suggestedPrice,
-    bestBid,
-    bestAsk,
-    ...fallbackPrices
-  ].filter((price): price is number => price !== null);
-  const minAnchor = anchorPrices.length > 0 ? Math.min(...anchorPrices) : 0.01;
-  const maxAnchor = anchorPrices.length > 0 ? Math.max(...anchorPrices) : 0.99;
-  const contextTicks = 3;
-  const displayMinPrice = Math.max(
-    tickSize,
-    floorToTick(minAnchor - tickSize * contextTicks, tickSize)
-  );
-  const displayMaxPrice = Math.min(
-    1 - tickSize,
-    ceilToTick(maxAnchor + tickSize * contextTicks, tickSize)
-  );
-  const prices = new Set(buildTickRange(displayMinPrice, displayMaxPrice, tickSize));
-
-  for (const price of anchorPrices) {
-    if (price >= displayMinPrice - EPSILON && price <= displayMaxPrice + EPSILON) {
-      prices.add(roundToTick(price, tickSize));
-    }
-  }
-
-  const sortedPrices = [...prices].sort((left, right) => right - left);
-  const levels = sortedPrices.map((price) => {
-    const bidShares = levelSizeAt(bids, price);
-    const askShares = levelSizeAt(asks, price);
-    return {
-      price,
-      bidShares,
-      askShares,
-      bidNotional: bidShares * price,
-      askNotional: askShares * price,
-      bidCumulativeShares: cumulativeBidSharesAt(bids, price),
-      askCumulativeShares: cumulativeAskSharesAt(asks, price),
-      isRewardBand:
-        rewardFloorPrice !== null &&
-        midpoint !== null &&
-        price >= rewardFloorPrice - EPSILON &&
-        price < midpoint - EPSILON,
-      isSuggestedPrice: samePrice(price, suggestedPrice),
-      isBestBid: samePrice(price, bestBid),
-      isBestAsk: samePrice(price, bestAsk),
-      isMidpointBoundary: samePrice(price, midpoint),
-      isRewardFloor: samePrice(price, rewardFloorPrice)
-    };
-  });
-
-  return {
-    levels,
-    maxBidShares: Math.max(1, ...levels.map((level) => level.bidShares)),
-    maxAskShares: Math.max(1, ...levels.map((level) => level.askShares)),
-    displayMinPrice,
-    displayMaxPrice
-  };
 }
 
 export async function fetchLiveBook(tokenId: string) {
@@ -727,40 +308,69 @@ export async function fetchLiveBook(tokenId: string) {
   };
 }
 
-async function fetchPriceHistoryForInterval(
+const PRICE_HISTORY_INTERVALS = new Set<PriceHistoryInterval>([
+  "1m",
+  "1h",
+  "6h",
+  "1d",
+  "1w",
+  "max"
+]);
+
+export function parsePriceHistoryInterval(value: string | null) {
+  return value && PRICE_HISTORY_INTERVALS.has(value as PriceHistoryInterval)
+    ? (value as PriceHistoryInterval)
+    : "6h";
+}
+
+function fidelityForInterval(interval: PriceHistoryInterval) {
+  switch (interval) {
+    case "1m":
+      return "1";
+    case "1h":
+      return "1";
+    case "1d":
+      return "15";
+    case "1w":
+      return "60";
+    case "max":
+      return "240";
+    case "6h":
+    default:
+      return "5";
+  }
+}
+
+export async function fetchPriceHistory(
   tokenId: string,
-  interval: "1d" | "1w",
-  fidelity: number
+  interval: PriceHistoryInterval = "6h"
 ) {
   const url = new URL(CLOB_PRICE_HISTORY_URL);
   url.searchParams.set("market", tokenId);
   url.searchParams.set("interval", interval);
-  url.searchParams.set("fidelity", String(fidelity));
+  url.searchParams.set("fidelity", fidelityForInterval(interval));
 
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
-    return [];
+    throw new Error(`Price history fetch failed with status ${response.status}`);
   }
 
   const payload = (await response.json()) as PriceHistoryResponse;
-  return normalizeHistory(payload.history);
-}
-
-export async function fetchPriceHistory(tokenId: string): Promise<OpportunityPriceChart> {
-  let interval: OpportunityPriceChart["interval"] = "1d";
-  let points = await fetchPriceHistoryForInterval(tokenId, "1d", 15);
-
-  if (points.length < 2) {
-    interval = "1w";
-    points = await fetchPriceHistoryForInterval(tokenId, "1w", 60);
+  if (!Array.isArray(payload.history)) {
+    return [];
   }
 
-  return {
-    points,
-    minPrice: points.length > 0 ? Math.min(...points.map((point) => point.price)) : null,
-    maxPrice: points.length > 0 ? Math.max(...points.map((point) => point.price)) : null,
-    interval
-  };
+  return payload.history
+    .map((point) => {
+      const t = toNumber(point.t);
+      const p = toNumber(point.p);
+      if (t === null || p === null || p < 0 || p > 1) {
+        return null;
+      }
+      return { t, p };
+    })
+    .filter((point): point is OpportunityDetailPricePoint => point !== null)
+    .sort((left, right) => left.t - right.t);
 }
 
 export function computeOpportunityDetail(input: {
@@ -770,7 +380,7 @@ export function computeOpportunityDetail(input: {
   quoteSizeUsdc: number;
   bids: BookLevel[];
   asks: BookLevel[];
-  priceChart: OpportunityPriceChart;
+  priceHistory: OpportunityDetailPricePoint[];
   tickSize: number;
   fetchedAt: string;
 }): OpportunityDetailPayload {
@@ -781,26 +391,22 @@ export function computeOpportunityDetail(input: {
     quoteSizeUsdc,
     bids,
     asks,
-    priceChart,
+    priceHistory,
     tickSize,
     fetchedAt
   } = input;
   const spreadBand = row.rewardsMaxSpread / 100;
   const bestBid = bids[0]?.price ?? null;
   const bestAsk = asks[0]?.price ?? null;
-  const hasRewardRules = row.rewardsMaxSpread > 0 && row.rewardsMinSize > 0;
-  const midpoint = hasRewardRules
-    ? adjustedMidpoint(bids, asks, row.rewardsMinSize)
-    : null;
+  const midpoint = adjustedMidpoint(bids, asks, row.rewardsMinSize);
   const currentSpread =
     bestBid !== null && bestAsk !== null ? bestAsk - bestBid : null;
   const spreadRatio =
     currentSpread !== null && spreadBand > 0 ? currentSpread / spreadBand : null;
   const pricingZone = midpoint === null ? null : toPricingZone(midpoint);
-  const rewardDaysRemaining = daysRemaining(row.rewardEndDate);
 
   let status = "skip";
-  let reason = hasRewardRules ? "missing_book_data" : "reward_rules_unavailable";
+  let reason = "missing_book_data";
   let rewardFloorPrice: number | null = null;
   let suggestedPrice: number | null = null;
   let ownShares: number | null = null;
@@ -813,8 +419,9 @@ export function computeOpportunityDetail(input: {
   let aprCeiling: number | null = null;
   let rawApr: number | null = null;
   let effectiveAprValue: number | null = null;
+  let askUpperPrice: number | null = null;
 
-  if (hasRewardRules && midpoint !== null && bestAsk !== null) {
+  if (midpoint !== null && bestAsk !== null) {
     status = "skip";
     reason = "missing_book_data";
 
@@ -824,6 +431,10 @@ export function computeOpportunityDetail(input: {
       rewardFloorPrice = ceilToTick(midpoint - spreadBand, tickSize);
       if (rewardFloorPrice < tickSize) {
         rewardFloorPrice = tickSize;
+      }
+      askUpperPrice = floorToTick(midpoint + spreadBand, tickSize);
+      if (askUpperPrice > 1) {
+        askUpperPrice = 1;
       }
 
       suggestedPrice = suggestedBidPrice(
@@ -867,25 +478,27 @@ export function computeOpportunityDetail(input: {
             status = "watchlist";
             reason = "too_crowded";
           } else {
-            const estimate = estimateQuote({
-              notional: quoteSizeUsdc,
-              suggestedPrice,
+            const ourScore = scoreWeight(spreadBand, midpoint - suggestedPrice);
+            const bookVisibleWeight = visibleWeight(
+              bids,
               midpoint,
               spreadBand,
-              rewardFloorPrice,
-              bids,
-              rewardDailyRate: row.rewardDailyRate,
-              pricingZone,
-              mode
-            });
+              rewardFloorPrice
+            );
+            const ourWeight =
+              ownShares !== null && ourScore !== null ? ownShares * ourScore : null;
+            const denominator =
+              ourWeight === null ? null : ourWeight + bookVisibleWeight;
 
-            if (estimate.rawApr === null || estimate.effectiveApr === null) {
+            if (ourWeight === null || denominator === null || denominator <= 0) {
               status = "watchlist";
               reason = "unclear";
             } else {
-              aprCeiling = estimate.aprCeiling;
-              rawApr = estimate.rawApr;
-              effectiveAprValue = estimate.effectiveApr;
+              aprCeiling = row.rewardDailyRate * 36500 / quoteSizeUsdc;
+              rawApr =
+                row.rewardDailyRate * (ourWeight / denominator) * 36500 / quoteSizeUsdc;
+              effectiveAprValue =
+                pricingZone === null ? null : effectiveApr(rawApr, pricingZone, mode);
               status = "candidate_now";
               reason = "in_band";
             }
@@ -895,92 +508,14 @@ export function computeOpportunityDetail(input: {
     }
   }
 
-  const queueSupportedNotional =
-    suggestedPrice !== null &&
-    queueShares !== null &&
-    meta.minQueueMultiple > 0
-      ? (queueShares / meta.minQueueMultiple) * suggestedPrice
-      : null;
-  const canSuggestReducedSize =
-    reason === "queue_too_thin" &&
-    queueSupportedNotional !== null &&
-    minimumQualifyingUsdc !== null &&
-    queueSupportedNotional >= minimumQualifyingUsdc - EPSILON &&
-    queueSupportedNotional < quoteSizeUsdc - EPSILON;
-  const recommendedNotional = canSuggestReducedSize
-    ? queueSupportedNotional
-    : quoteSizeUsdc;
-  const recommendedEstimate = canSuggestReducedSize
-    ? estimateQuote({
-        notional: recommendedNotional,
-        suggestedPrice,
-        midpoint,
-        spreadBand,
-        rewardFloorPrice,
-        bids,
-        rewardDailyRate: row.rewardDailyRate,
-        pricingZone,
-        mode
-      })
-    : {
-        ownShares,
-        aprCeiling,
-        rawApr,
-        effectiveApr: effectiveAprValue
-      };
-  const recommendedShares = canSuggestReducedSize
-    ? recommendedEstimate.ownShares
-    : ownShares;
-  const recommendedAprCeiling = canSuggestReducedSize
-    ? recommendedEstimate.aprCeiling
-    : aprCeiling;
-  const recommendedRawApr = canSuggestReducedSize
-    ? recommendedEstimate.rawApr
-    : rawApr;
-  const recommendedEffectiveApr = canSuggestReducedSize
-    ? recommendedEstimate.effectiveApr
-    : effectiveAprValue;
-  const estimatedApr = mode === "two" ? recommendedRawApr : recommendedEffectiveApr;
-  const estimatedRewardPerDay =
-    estimatedApr !== null ? (recommendedNotional * estimatedApr) / 36500 : null;
-  const estimatedRewardUntilEnd =
-    estimatedRewardPerDay !== null && rewardDaysRemaining !== null
-      ? estimatedRewardPerDay * rewardDaysRemaining
-      : null;
-  const recommendation: OpportunityRecommendation = {
-    action: recommendationAction(status),
-    title: recommendationTitle(status),
-    reason: recommendationReason({
-      status,
-      reason,
-      quoteSizeUsdc,
-      queueMultiple,
-      minQueueMultiple: meta.minQueueMultiple,
-      queueSupportedNotional,
-      suggestedNotional: recommendedNotional,
-      minimumQualifyingUsdc,
-      canSuggestReducedSize
-    }),
-    orderSide: row.sideToTrade,
-    limitPrice: suggestedPrice,
-    shares: recommendedShares,
-    requestedNotional: quoteSizeUsdc,
-    notional: recommendedNotional,
-    queueSupportedNotional,
-    isReducedSize: canSuggestReducedSize,
-    estimatedApr,
-    estimatedRewardPerDay,
-    estimatedRewardUntilEnd,
-    rewardBandLow: rewardFloorPrice,
-    rewardBandHigh: midpoint
-  };
-
   const bounds = scaleBounds([
     bestBid,
     bestAsk,
     midpoint,
     rewardFloorPrice,
-    suggestedPrice
+    askUpperPrice,
+    suggestedPrice,
+    ...priceHistory.map((point) => point.p)
   ]);
 
   return {
@@ -1002,34 +537,24 @@ export function computeOpportunityDetail(input: {
     queueAheadNotional: queueNotional,
     queueMultiple,
     qualifyingDepthShares: depthShares,
-    aprCeiling: recommendedAprCeiling,
-    rawApr: recommendedRawApr,
-    effectiveApr: recommendedEffectiveApr,
-    estimatedRewardPerDay,
-    estimatedRewardUntilEnd,
-    rewardStartDate: row.rewardStartDate,
-    rewardEndDate: row.rewardEndDate,
-    rewardDaysRemaining,
-    eventEndTime: row.eventEndTime,
+    aprCeiling,
+    rawApr,
+    effectiveApr: effectiveAprValue,
     spreadRatio,
     distanceToAsk,
     pricingZone,
     status,
     reason,
-    recommendation,
-    orderBookChart: buildOrderBookChart({
-      bids,
-      asks,
-      tickSize,
-      rewardFloorPrice,
+    rewardBand: {
+      bidLower: rewardFloorPrice,
       midpoint,
-      suggestedPrice,
-      bestBid,
-      bestAsk
-    }),
-    priceChart,
+      askUpper: askUpperPrice,
+      maxSpread: spreadBand
+    },
+    priceHistory,
     depth: {
-      bids: compactDepth(bids, rewardFloorPrice, midpoint, suggestedPrice),
+      asks: buildAskDepth(asks, midpoint, askUpperPrice),
+      bids: buildBidDepth(bids, rewardFloorPrice, midpoint, suggestedPrice),
       scaleMin: bounds.scaleMin,
       scaleMax: bounds.scaleMax
     }

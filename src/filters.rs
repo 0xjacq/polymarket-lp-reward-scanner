@@ -217,8 +217,6 @@ mod tests {
             reward_daily_rate: dec!(2),
             rewards_min_size: dec!(50),
             rewards_max_spread: dec!(3.5),
-            reward_start_date: None,
-            reward_end_date: None,
             market_competitiveness: Some(dec!(1)),
         };
         let mut market = sample_market();
@@ -266,8 +264,6 @@ mod tests {
             reward_daily_rate: dec!(2),
             rewards_min_size: dec!(50),
             rewards_max_spread: dec!(3.5),
-            reward_start_date: None,
-            reward_end_date: None,
             market_competitiveness: Some(dec!(1)),
         };
         let market = sample_market();
@@ -284,8 +280,6 @@ mod tests {
                 reward_daily_rate: dec!(2),
                 rewards_min_size: dec!(50),
                 rewards_max_spread: dec!(3.5),
-                reward_start_date: None,
-                reward_end_date: None,
                 market_competitiveness: Some(dec!(1)),
             }],
             &markets,
@@ -303,8 +297,6 @@ mod tests {
             reward_daily_rate: dec!(2),
             rewards_min_size: dec!(50),
             rewards_max_spread: dec!(3.5),
-            reward_start_date: None,
-            reward_end_date: None,
             market_competitiveness: Some(dec!(1)),
         };
         let mut market = sample_market();

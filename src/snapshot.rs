@@ -88,8 +88,6 @@ pub struct SnapshotDashboardRow {
     pub reward_daily_rate: Decimal,
     pub rewards_max_spread: Decimal,
     pub rewards_min_size: Decimal,
-    pub reward_start_date: Option<String>,
-    pub reward_end_date: Option<String>,
     pub market_competitiveness: Option<Decimal>,
 }
 
@@ -111,9 +109,6 @@ pub struct SnapshotOpportunityRow {
     pub reward_daily_rate: Decimal,
     pub rewards_max_spread: Decimal,
     pub rewards_min_size: Decimal,
-    pub reward_start_date: Option<String>,
-    pub reward_end_date: Option<String>,
-    pub event_end_time: Option<String>,
     pub pricing_zone: Option<PricingZone>,
     pub market_competitiveness: Option<Decimal>,
     pub spread_ratio: Option<Decimal>,
@@ -130,7 +125,6 @@ struct MarketUiMetadata {
     image: Option<String>,
     tags: Vec<String>,
     reference_start_time: Option<DateTime<Utc>>,
-    event_end_time: Option<DateTime<Utc>>,
 }
 
 pub async fn build_snapshot(
@@ -139,7 +133,7 @@ pub async fn build_snapshot(
 ) -> Result<Snapshot> {
     let started_at = Instant::now();
     let generated_started_at = Utc::now();
-    let source_version = format!("polymarket-lp-reward-scanner/{}", env!("CARGO_PKG_VERSION"));
+    let source_version = format!("napolyrewardfarmor/{}", env!("CARGO_PKG_VERSION"));
 
     let rewards = client.fetch_current_rewards_all().await?;
     let unique_condition_ids: Vec<_> = rewards
@@ -409,8 +403,6 @@ fn build_dashboard_rows(
                 reward_daily_rate: row.reward_daily_rate,
                 rewards_max_spread: row.rewards_max_spread,
                 rewards_min_size: row.rewards_min_size,
-                reward_start_date: reward.reward_start_date.map(|date| date.to_string()),
-                reward_end_date: reward.reward_end_date.map(|date| date.to_string()),
                 market_competitiveness: row.market_competitiveness,
             }
         })
@@ -448,11 +440,6 @@ fn build_opportunity_rows(
                 reward_daily_rate: opportunity.reward_daily_rate,
                 rewards_max_spread: opportunity.rewards_max_spread,
                 rewards_min_size: opportunity.rewards_min_size,
-                reward_start_date: opportunity.reward_start_date.map(|date| date.to_string()),
-                reward_end_date: opportunity.reward_end_date.map(|date| date.to_string()),
-                event_end_time: metadata
-                    .and_then(|metadata| metadata.event_end_time)
-                    .map(|value| value.to_rfc3339()),
                 pricing_zone: opportunity.pricing_zone,
                 market_competitiveness: opportunity.market_competitiveness,
                 spread_ratio: opportunity.spread_ratio,
@@ -482,7 +469,6 @@ fn build_market_metadata_map(
                     image: market.image.clone(),
                     tags: flatten_tags(market),
                     reference_start_time: reference_start_time(market),
-                    event_end_time: market.end_date,
                 },
             )
         })
@@ -594,8 +580,6 @@ mod tests {
             reward_daily_rate: dec!(5),
             rewards_max_spread: dec!(3.5),
             rewards_min_size: dec!(50),
-            reward_start_date: None,
-            reward_end_date: None,
             pricing_zone: Some(PricingZone::Neutral),
             market_competitiveness: Some(dec!(1)),
             spread_ratio: Some(dec!(0.5)),
@@ -624,13 +608,14 @@ mod tests {
             &HashMap::from([(
                 B256::ZERO.to_string(),
                 MarketUiMetadata {
-                    market_url: Some("https://polymarket.com/event/question-event".to_string()),
+                    market_url: Some(
+                        "https://polymarket.com/event/question-event".to_string(),
+                    ),
                     image: Some("https://example.com/image.png".to_string()),
                     tags: vec!["Energy".to_string()],
                     reference_start_time: Some(
                         Utc.with_ymd_and_hms(2026, 4, 17, 11, 30, 0).unwrap(),
                     ),
-                    event_end_time: Some(Utc.with_ymd_and_hms(2026, 4, 18, 12, 0, 0).unwrap()),
                 },
             )]),
             now,
@@ -661,7 +646,7 @@ mod tests {
         let meta = SnapshotMeta {
             generated_at: "2026-04-23T08:00:00Z".to_string(),
             scan_duration_ms: 1000,
-            source_version: "polymarket-lp-reward-scanner/test".to_string(),
+            source_version: "napolyrewardfarmor/test".to_string(),
             quote_size_usdc: dec!(1000),
             min_queue_multiple: dec!(2),
             competitiveness_p90: Some(dec!(1.5)),
@@ -682,9 +667,6 @@ mod tests {
             reward_daily_rate: dec!(5),
             rewards_max_spread: dec!(3.5),
             rewards_min_size: dec!(50),
-            reward_start_date: Some("2026-04-01".to_string()),
-            reward_end_date: Some("2026-04-30".to_string()),
-            event_end_time: Some("2026-04-30T12:00:00Z".to_string()),
             pricing_zone: Some(PricingZone::Neutral),
             market_competitiveness: Some(dec!(1)),
             spread_ratio: Some(dec!(0.5)),
@@ -698,29 +680,14 @@ mod tests {
         let meta_json = serde_json::to_value(meta).unwrap();
         let row_json = serde_json::to_value(row).unwrap();
 
+        assert_eq!(meta_json.get("quoteSizeUsdc").and_then(|value| value.as_str()), Some("1000"));
         assert_eq!(
-            meta_json
-                .get("quoteSizeUsdc")
-                .and_then(|value| value.as_str()),
-            Some("1000")
-        );
-        assert_eq!(
-            row_json
-                .get("rewardsMaxSpread")
-                .and_then(|value| value.as_str()),
+            row_json.get("rewardsMaxSpread").and_then(|value| value.as_str()),
             Some("3.5")
         );
         assert_eq!(
-            row_json
-                .get("rewardsMinSize")
-                .and_then(|value| value.as_str()),
+            row_json.get("rewardsMinSize").and_then(|value| value.as_str()),
             Some("50")
-        );
-        assert_eq!(
-            row_json
-                .get("rewardEndDate")
-                .and_then(|value| value.as_str()),
-            Some("2026-04-30")
         );
     }
 }

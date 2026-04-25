@@ -1,109 +1,124 @@
 # Polymarket LP Reward Scanner
 
-Snapshot-backed scanner and dashboard for Polymarket liquidity reward programs.
+Public handoff repository for the Polymarket liquidity-provider reward scanner at:
 
-The project uses Rust for market fetching, reward analysis, APR scoring, queue/spread evaluation, and snapshot generation. A small Next.js app serves the latest precomputed snapshot and provides two views:
+- Production: <https://polymarket-lp-reward-scanner.vercel.app/>
+- GitHub: <https://github.com/0xjacq/polymarket-lp-reward-scanner>
 
-- `Opportunities`: tradeable or watchlist rows with APR, queue, spread, status, and timing
-- `Dashboard`: reward markets overview sorted by reward rate and timing metadata
+The project has two cooperating parts:
+
+- Rust scanner: fetches Polymarket reward markets, books, timing metadata, spread/queue state, APR estimates, and emits a snapshot.
+- Next.js dashboard: reads the latest published snapshot, shows ranked LP opportunities, and opens live LP details with Polymarket CLOB orderbook streaming and price-history charts.
+
+Production is snapshot-backed. The app does not run the full Rust scanner on every web request.
 
 ## Architecture
 
-Production is designed around a precomputed snapshot, not per-request scanner execution:
-
-1. Rust fetches rewards, markets, details, competitiveness, and books
-2. Rust emits one JSON snapshot containing dashboard rows and both opportunity datasets
-3. GitHub Actions publishes that snapshot to Vercel Blob at `scanner/latest.json`
-4. The Vercel app reads the latest snapshot through `SNAPSHOT_PUBLIC_URL`
-5. Browsers poll the app every 30 seconds while the authoritative snapshot cadence remains 5 minutes
+1. Rust fetches CLOB/Gamma/rewards data and builds one JSON snapshot.
+2. GitHub Actions runs `npm run snapshot:publish` every 5 minutes.
+3. `scripts/publish-snapshot.mjs` generates the snapshot and uploads it to Vercel Blob at `scanner/latest.json`.
+4. Vercel serves the Next.js app.
+5. The app reads the snapshot through `SNAPSHOT_PUBLIC_URL`.
+6. Browser clients poll the app every 30 seconds.
+7. LP details fetch a live REST orderbook once, then subscribe directly to Polymarket's public CLOB WebSocket for event-driven book updates.
 
 ## Repository Layout
 
-- `src/`: Rust scanner, filters, scoring, models, snapshot builder, and CLIs
-- `app/`, `components/`, `lib/`: Next.js frontend and snapshot-backed API routes
-- `scripts/publish-snapshot.mjs`: snapshot generation + Blob upload entrypoint
-- `docs/vercel-snapshot.md`: Vercel, Blob, and GitHub Actions deployment guide
-- `.github/workflows/publish-snapshot.yml`: scheduled publish workflow
+- `src/`: Rust scanner, filters, scoring, models, snapshot builder, and CLIs.
+- `app/`: Next.js routes and API endpoints.
+- `components/`: dashboard UI and shadcn-style primitives.
+- `lib/`: snapshot loading, LP detail computation, orderbook utilities, shared UI helpers.
+- `scripts/publish-snapshot.mjs`: snapshot generation and Vercel Blob upload.
+- `docs/vercel-snapshot.md`: production snapshot, Vercel, and GitHub Actions runbook.
+- `docs/ai-handoff.md`: operational context for the next AI agent.
+- `ROADMAP.md`: known scoring gaps and deferred reward-methodology refactor.
+- `AGENTS.md`: project-specific AI instructions.
 
-## Local Development
+## Requirements
 
-### Requirements
-
-- Rust stable
 - Node.js 22+
 - npm
+- Rust stable
+- Vercel CLI only for deployment operations
 
-### Install
+## Commands
 
 ```bash
 npm ci
+npm run build
+cargo check
+cargo test
 ```
 
-### Run against a real published snapshot
-
-Create `.env.local`:
+Generate a snapshot locally:
 
 ```bash
-SNAPSHOT_PUBLIC_URL=https://.../scanner/latest.json
+npm run snapshot:generate -- --quote-size-usdc 1000
 ```
 
-Then start the app:
+Publish the snapshot to Vercel Blob:
+
+```bash
+BLOB_READ_WRITE_TOKEN=... npm run snapshot:publish
+```
+
+Use local dev only for implementation/debugging, not visual QA sign-off:
 
 ```bash
 npm run dev
 ```
 
-### Run against an explicit local snapshot file
+## Environment
 
-Generate a snapshot:
-
-```bash
-cargo run --quiet --bin snapshot -- --quote-size-usdc 1000 > /tmp/polymarket-lp-reward-scanner-snapshot.json
-```
-
-Start the app with that file:
-
-```bash
-SNAPSHOT_LOCAL_PATH=/tmp/polymarket-lp-reward-scanner-snapshot.json npm run dev
-```
-
-### Run against the synthetic mock fixture
-
-```bash
-npm run dev:mock-snapshot
-```
-
-This uses the committed synthetic fixture at `fixtures/mock-snapshot.json`.
-
-## Production Deployment
-
-Production uses:
-
-- Vercel for the web app
-- Vercel Blob for the latest snapshot object
-- GitHub Actions for scheduled snapshot publishing
-
-Required configuration:
+Never commit real env files. Required runtime configuration is:
 
 - GitHub Actions secret: `BLOB_READ_WRITE_TOKEN`
 - Vercel environment variable: `SNAPSHOT_PUBLIC_URL`
 
-Detailed setup steps live in [docs/vercel-snapshot.md](docs/vercel-snapshot.md).
+Optional scanner tuning variables are documented in [docs/vercel-snapshot.md](docs/vercel-snapshot.md).
+
+The snapshot loader precedence is:
+
+1. `SNAPSHOT_LOCAL_PATH`
+2. `SNAPSHOT_PUBLIC_URL`
+3. Vercel Blob lookup with `BLOB_READ_WRITE_TOKEN`
+
+Production should use `SNAPSHOT_PUBLIC_URL`; the Vercel runtime should not depend on Blob write credentials.
+
+## Production QA
+
+The canonical browser QA target is:
+
+```text
+https://polymarket-lp-reward-scanner.vercel.app/
+```
+
+For UI changes:
+
+1. Run `npm run build`.
+2. Deploy to the linked Vercel project.
+3. Test only the canonical Vercel URL in the browser.
+
+Do not use `localhost` as the final visual QA target.
 
 ## Security
 
-Do not commit:
+This repo is public. Do not publish:
 
-- `.env` files with real values
-- `.vercel/`
-- Blob, GitHub, or Vercel tokens
-- generated snapshots unless intentionally used as test fixtures
+- `.env*` files with real values.
+- `.vercel/`.
+- Vercel, GitHub, Blob, OpenAI, or other service tokens.
+- private keys, certificates, local logs, generated build directories, or machine-specific files.
 
-Report security issues through the process in [SECURITY.md](SECURITY.md).
+Before staging, run a secret scan and verify `git diff --cached --name-only`.
 
-## Contributing
+## Current Product Notes
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull request expectations.
+- Scanner scoring is intentionally approximate for single-sided LP selection.
+- The live orderbook in LP details uses Polymarket public WebSocket events in the browser.
+- Price history uses Polymarket `/prices-history` with selectable intervals.
+- Browser timestamps use the client locale/timezone.
+- Further scoring accuracy work is tracked in [ROADMAP.md](ROADMAP.md).
 
 ## License
 
