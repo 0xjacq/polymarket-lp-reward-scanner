@@ -95,7 +95,7 @@ export function buildAskDepth(
     const inRewardBand =
       midpoint !== null &&
       askUpperPrice !== null &&
-      level.price > midpoint + EPSILON &&
+      level.price >= midpoint - EPSILON &&
       level.price <= askUpperPrice + EPSILON;
 
     return {
