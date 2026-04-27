@@ -57,8 +57,8 @@ pub struct DashboardSnapshot {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotOpportunities {
-    pub single_sided: SnapshotOpportunityDataset,
-    pub two_sided: SnapshotOpportunityDataset,
+    pub neutral: SnapshotOpportunityDataset,
+    pub extreme: SnapshotOpportunityDataset,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -115,6 +115,7 @@ pub struct SnapshotOpportunityRow {
     pub apr_ceiling: Option<Decimal>,
     pub raw_apr: Option<Decimal>,
     pub effective_apr: Option<Decimal>,
+    pub two_sided_apr: Option<Decimal>,
     pub suggested_price: Option<Decimal>,
     pub queue_multiple: Option<Decimal>,
 }
@@ -216,17 +217,7 @@ pub async fn build_snapshot(
         .collect();
     let books = client.fetch_order_books(&token_ids).await?;
 
-    let mut preliminary_single = analyze_markets(
-        &eligible,
-        &books,
-        config.quote_size_usdc,
-        config.min_queue_multiple,
-        false,
-        None,
-    );
-    sort_opportunities(&mut preliminary_single, config.sort);
-
-    let mut preliminary_two = analyze_markets(
+    let mut preliminary = analyze_markets(
         &eligible,
         &books,
         config.quote_size_usdc,
@@ -234,7 +225,7 @@ pub async fn build_snapshot(
         true,
         None,
     );
-    sort_opportunities(&mut preliminary_two, config.sort);
+    sort_opportunities(&mut preliminary, config.sort);
 
     let competitiveness_shortlist_size = std::cmp::max(
         config
@@ -242,10 +233,9 @@ pub async fn build_snapshot(
             .saturating_mul(config::COMPETITIVENESS_SHORTLIST_MULTIPLIER),
         config::COMPETITIVENESS_SHORTLIST_MIN,
     );
-    let shortlisted_condition_ids: HashSet<String> = preliminary_single
+    let shortlisted_condition_ids: HashSet<String> = preliminary
         .iter()
         .take(competitiveness_shortlist_size)
-        .chain(preliminary_two.iter().take(competitiveness_shortlist_size))
         .map(|opportunity| opportunity.market_id.clone())
         .collect();
 
@@ -279,25 +269,7 @@ pub async fn build_snapshot(
             .collect::<Vec<_>>(),
     );
 
-    let mut single_sided = analyze_markets(
-        &eligible,
-        &books,
-        config.quote_size_usdc,
-        config.min_queue_multiple,
-        false,
-        competitiveness_p90,
-    );
-    single_sided.retain(|opportunity| {
-        opportunity.status != OpportunityStatus::CandidateNow
-            || opportunity
-                .apr_effective
-                .map(|apr| apr >= config.min_apr)
-                .unwrap_or(false)
-    });
-    sort_opportunities(&mut single_sided, config.sort);
-    single_sided.truncate(config.limit);
-
-    let mut two_sided = analyze_markets(
+    let mut all = analyze_markets(
         &eligible,
         &books,
         config.quote_size_usdc,
@@ -305,22 +277,42 @@ pub async fn build_snapshot(
         true,
         competitiveness_p90,
     );
-    two_sided.retain(|opportunity| {
+    sort_opportunities(&mut all, config.sort);
+
+    let mut neutral: Vec<_> = all
+        .iter()
+        .filter(|o| o.pricing_zone == Some(PricingZone::Neutral))
+        .cloned()
+        .collect();
+    neutral.retain(|opportunity| {
         opportunity.status != OpportunityStatus::CandidateNow
             || opportunity
                 .apr_effective
                 .map(|apr| apr >= config.min_apr)
                 .unwrap_or(false)
     });
-    sort_opportunities(&mut two_sided, config.sort);
-    two_sided.truncate(config.limit);
+    neutral.truncate(config.limit);
+
+    let mut extreme: Vec<_> = all
+        .iter()
+        .filter(|o| o.pricing_zone == Some(PricingZone::Extreme))
+        .cloned()
+        .collect();
+    extreme.retain(|opportunity| {
+        opportunity.status != OpportunityStatus::CandidateNow
+            || opportunity
+                .two_sided_apr
+                .map(|apr| apr >= config.min_apr)
+                .unwrap_or(false)
+    });
+    extreme.truncate(config.limit);
 
     let market_metadata = build_market_metadata_map(&markets);
     let generated_at = Utc::now();
     let dashboard_rows =
         build_dashboard_rows(&dashboard_rewards, &reward_details, &markets, generated_at);
-    let single_rows = build_opportunity_rows(&single_sided, &market_metadata, generated_at);
-    let two_rows = build_opportunity_rows(&two_sided, &market_metadata, generated_at);
+    let neutral_rows = build_opportunity_rows(&neutral, &market_metadata, generated_at);
+    let extreme_rows = build_opportunity_rows(&extreme, &market_metadata, generated_at);
 
     Ok(Snapshot {
         meta: SnapshotMeta {
@@ -336,8 +328,8 @@ pub async fn build_snapshot(
             rows: dashboard_rows,
         },
         opportunities: SnapshotOpportunities {
-            single_sided: SnapshotOpportunityDataset { rows: single_rows },
-            two_sided: SnapshotOpportunityDataset { rows: two_rows },
+            neutral: SnapshotOpportunityDataset { rows: neutral_rows },
+            extreme: SnapshotOpportunityDataset { rows: extreme_rows },
         },
     })
 }
@@ -446,6 +438,7 @@ fn build_opportunity_rows(
                 apr_ceiling: opportunity.apr_ceiling,
                 raw_apr: opportunity.apr_estimated,
                 effective_apr: opportunity.apr_effective,
+                two_sided_apr: opportunity.two_sided_apr,
                 suggested_price: opportunity.suggested_price,
                 queue_multiple: opportunity.liquidity_info.queue_multiple,
             }
@@ -586,6 +579,7 @@ mod tests {
             apr_ceiling: Some(dec!(100)),
             apr_estimated: Some(dec!(25)),
             apr_effective: Some(dec!(8.33)),
+            two_sided_apr: Some(dec!(25)),
             suggested_price: Some(dec!(0.48)),
             liquidity_info: LiquidityInfo {
                 best_bid: Some(dec!(0.47)),
@@ -673,6 +667,7 @@ mod tests {
             apr_ceiling: Some(dec!(100)),
             raw_apr: Some(dec!(25)),
             effective_apr: Some(dec!(8.33)),
+            two_sided_apr: Some(dec!(25)),
             suggested_price: Some(dec!(0.48)),
             queue_multiple: Some(dec!(2.5)),
         };

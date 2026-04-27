@@ -63,6 +63,7 @@ export type OpportunityRow = {
   aprCeiling: number | null;
   rawApr: number | null;
   effectiveApr: number | null;
+  twoSidedApr: number | null;
   suggestedPrice: number | null;
   queueMultiple: number | null;
 };
@@ -76,8 +77,8 @@ export type DashboardResponse = {
 export type ScannerResponse = {
   meta: SnapshotMeta;
   availableTags: string[];
-  singleSided: { rows: OpportunityRow[] };
-  twoSided: { rows: OpportunityRow[] };
+  neutral: { rows: OpportunityRow[] };
+  extreme: { rows: OpportunityRow[] };
 };
 
 type SnapshotPayload = {
@@ -85,8 +86,8 @@ type SnapshotPayload = {
   availableTags: string[];
   dashboard: { rows: DashboardRow[] };
   opportunities: {
-    singleSided: { rows: OpportunityRow[] };
-    twoSided: { rows: OpportunityRow[] };
+    neutral: { rows: OpportunityRow[] };
+    extreme: { rows: OpportunityRow[] };
   };
 };
 
@@ -186,6 +187,7 @@ function normalizeOpportunityRow(value: unknown): OpportunityRow {
     aprCeiling: toNumber(input.aprCeiling),
     rawApr: toNumber(input.rawApr),
     effectiveApr: toNumber(input.effectiveApr),
+    twoSidedApr: toNumber(input.twoSidedApr),
     suggestedPrice: toNumber(input.suggestedPrice),
     queueMultiple: toNumber(input.queueMultiple)
   };
@@ -195,8 +197,8 @@ function normalizeSnapshot(raw: unknown, source: SnapshotSource): SnapshotPayloa
   const input = asRecord(raw);
   const dashboard = asRecord(input.dashboard);
   const opportunities = asRecord(input.opportunities);
-  const singleSided = asRecord(opportunities.singleSided);
-  const twoSided = asRecord(opportunities.twoSided);
+  const neutral = asRecord(opportunities.neutral);
+  const extreme = asRecord(opportunities.extreme);
 
   return {
     meta: normalizeMeta(input.meta, source),
@@ -207,14 +209,14 @@ function normalizeSnapshot(raw: unknown, source: SnapshotSource): SnapshotPayloa
         : []
     },
     opportunities: {
-      singleSided: {
-        rows: Array.isArray(singleSided.rows)
-          ? singleSided.rows.map(normalizeOpportunityRow)
+      neutral: {
+        rows: Array.isArray(neutral.rows)
+          ? neutral.rows.map(normalizeOpportunityRow)
           : []
       },
-      twoSided: {
-        rows: Array.isArray(twoSided.rows)
-          ? twoSided.rows.map(normalizeOpportunityRow)
+      extreme: {
+        rows: Array.isArray(extreme.rows)
+          ? extreme.rows.map(normalizeOpportunityRow)
           : []
       }
     }
@@ -305,20 +307,20 @@ export async function getDashboardData(limit?: number): Promise<DashboardRespons
 
 export async function getScannerData(limit?: number): Promise<ScannerResponse> {
   const snapshot = await getSnapshot();
-  const singleRows =
+  const neutralRows =
     typeof limit === "number"
-      ? snapshot.opportunities.singleSided.rows.slice(0, limit)
-      : snapshot.opportunities.singleSided.rows;
-  const twoRows =
+      ? snapshot.opportunities.neutral.rows.slice(0, limit)
+      : snapshot.opportunities.neutral.rows;
+  const extremeRows =
     typeof limit === "number"
-      ? snapshot.opportunities.twoSided.rows.slice(0, limit)
-      : snapshot.opportunities.twoSided.rows;
+      ? snapshot.opportunities.extreme.rows.slice(0, limit)
+      : snapshot.opportunities.extreme.rows;
 
   return {
     meta: snapshot.meta,
     availableTags: snapshot.availableTags,
-    singleSided: { rows: singleRows },
-    twoSided: { rows: twoRows }
+    neutral: { rows: neutralRows },
+    extreme: { rows: extremeRows }
   };
 }
 
@@ -333,8 +335,8 @@ export async function getPageData() {
     scanner: {
       meta: snapshot.meta,
       availableTags: snapshot.availableTags,
-      singleSided: snapshot.opportunities.singleSided,
-      twoSided: snapshot.opportunities.twoSided
+      neutral: snapshot.opportunities.neutral,
+      extreme: snapshot.opportunities.extreme
     } satisfies ScannerResponse
   };
 }

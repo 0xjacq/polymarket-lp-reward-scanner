@@ -27,6 +27,7 @@ struct TokenDecision {
     apr_ceiling: Option<Decimal>,
     apr_estimated: Option<Decimal>,
     apr_effective: Option<Decimal>,
+    two_sided_apr: Option<Decimal>,
     suggested_price: Option<Decimal>,
     liquidity_info: LiquidityInfo,
 }
@@ -133,6 +134,7 @@ fn inspect_token(
         apr_ceiling: None,
         apr_estimated: None,
         apr_effective: None,
+        two_sided_apr: None,
         suggested_price: None,
         liquidity_info: LiquidityInfo {
             best_bid: None,
@@ -278,13 +280,15 @@ fn inspect_token(
     let apr_estimated =
         eligible.reward.reward_daily_rate * (our_weight / denominator) * dec!(36500)
             / quote_size_usdc;
-    let apr_effective = effective_apr(apr_estimated, pricing_zone, two_sided);
+    let apr_single = effective_apr(apr_estimated, pricing_zone, false);
+    let apr_two = effective_apr(apr_estimated, pricing_zone, true);
 
     decision.status = OpportunityStatus::CandidateNow;
     decision.reason = OpportunityReason::InBand;
     decision.apr_ceiling = Some(apr_ceiling);
     decision.apr_estimated = Some(apr_estimated);
-    decision.apr_effective = Some(apr_effective);
+    decision.apr_effective = Some(apr_single);
+    decision.two_sided_apr = Some(apr_two);
     decision
 }
 
@@ -639,6 +643,7 @@ fn to_opportunity(candidate: TokenDecision) -> Opportunity {
         apr_ceiling: candidate.apr_ceiling,
         apr_estimated: candidate.apr_estimated,
         apr_effective: candidate.apr_effective,
+        two_sided_apr: candidate.two_sided_apr,
         suggested_price: candidate.suggested_price,
         liquidity_info: candidate.liquidity_info,
     }
@@ -920,6 +925,7 @@ mod tests {
             scored.apr_effective.unwrap(),
             scored.apr_estimated.unwrap() / dec!(3)
         );
+        assert_eq!(scored.two_sided_apr.unwrap(), scored.apr_estimated.unwrap());
         assert_eq!(scored.suggested_price, Some(dec!(0.48)));
     }
 

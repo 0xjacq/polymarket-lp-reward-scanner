@@ -146,6 +146,7 @@ pub struct Opportunity {
     pub apr_ceiling: Option<Decimal>,
     pub apr_estimated: Option<Decimal>,
     pub apr_effective: Option<Decimal>,
+    pub two_sided_apr: Option<Decimal>,
     pub suggested_price: Option<Decimal>,
     pub liquidity_info: LiquidityInfo,
 }

@@ -10,7 +10,6 @@ const CLOB_PRICE_HISTORY_URL = "https://clob.polymarket.com/prices-history";
 const SINGLE_SIDED_PENALTY = 3;
 const EPSILON = 1e-9;
 
-export type DetailMode = "single" | "two";
 export type DetailPricingZone = "neutral" | "extreme";
 export type PriceHistoryInterval = "1m" | "1h" | "6h" | "1d" | "1w" | "max";
 
@@ -53,7 +52,6 @@ export type OpportunityDetailPayload = {
   fetchedAt: string;
   snapshotGeneratedAt: string;
   quoteSizeUsdc: number;
-  mode: DetailMode;
   bestBid: number | null;
   bestAsk: number | null;
   adjustedMidpoint: number | null;
@@ -71,6 +69,7 @@ export type OpportunityDetailPayload = {
   aprCeiling: number | null;
   rawApr: number | null;
   effectiveApr: number | null;
+  twoSidedApr: number | null;
   spreadRatio: number | null;
   distanceToAsk: number | null;
   pricingZone: DetailPricingZone | null;
@@ -245,8 +244,8 @@ function suggestedBidPrice(
   return candidate;
 }
 
-function effectiveApr(rawApr: number, pricingZone: DetailPricingZone, mode: DetailMode) {
-  if (mode === "two") {
+function effectiveApr(rawApr: number, pricingZone: DetailPricingZone, side: "single" | "two") {
+  if (side === "two") {
     return rawApr;
   }
   return pricingZone === "neutral" ? rawApr / SINGLE_SIDED_PENALTY : 0;
@@ -376,7 +375,6 @@ export async function fetchPriceHistory(
 export function computeOpportunityDetail(input: {
   row: OpportunityRow;
   meta: SnapshotMeta;
-  mode: DetailMode;
   quoteSizeUsdc: number;
   bids: BookLevel[];
   asks: BookLevel[];
@@ -387,7 +385,6 @@ export function computeOpportunityDetail(input: {
   const {
     row,
     meta,
-    mode,
     quoteSizeUsdc,
     bids,
     asks,
@@ -419,15 +416,14 @@ export function computeOpportunityDetail(input: {
   let aprCeiling: number | null = null;
   let rawApr: number | null = null;
   let effectiveAprValue: number | null = null;
+  let twoSidedAprValue: number | null = null;
   let askUpperPrice: number | null = null;
 
   if (midpoint !== null && bestAsk !== null) {
     status = "skip";
     reason = "missing_book_data";
 
-    if (pricingZone === "extreme" && mode === "single") {
-      reason = "extreme_single_sided";
-    } else {
+    {
       rewardFloorPrice = ceilToTick(midpoint - spreadBand, tickSize);
       if (rewardFloorPrice < tickSize) {
         rewardFloorPrice = tickSize;
@@ -498,7 +494,9 @@ export function computeOpportunityDetail(input: {
               rawApr =
                 row.rewardDailyRate * (ourWeight / denominator) * 36500 / quoteSizeUsdc;
               effectiveAprValue =
-                pricingZone === null ? null : effectiveApr(rawApr, pricingZone, mode);
+                pricingZone === null ? null : effectiveApr(rawApr, pricingZone, "single");
+              twoSidedAprValue =
+                pricingZone === null ? null : effectiveApr(rawApr, pricingZone, "two");
               status = "candidate_now";
               reason = "in_band";
             }
@@ -522,7 +520,6 @@ export function computeOpportunityDetail(input: {
     fetchedAt,
     snapshotGeneratedAt: meta.generatedAt,
     quoteSizeUsdc,
-    mode,
     bestBid,
     bestAsk,
     adjustedMidpoint: midpoint,
@@ -540,6 +537,7 @@ export function computeOpportunityDetail(input: {
     aprCeiling,
     rawApr,
     effectiveApr: effectiveAprValue,
+    twoSidedApr: twoSidedAprValue,
     spreadRatio,
     distanceToAsk,
     pricingZone,

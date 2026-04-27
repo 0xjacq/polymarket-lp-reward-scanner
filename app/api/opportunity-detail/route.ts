@@ -4,8 +4,7 @@ import {
   computeOpportunityDetail,
   fetchLiveBook,
   fetchPriceHistory,
-  parsePriceHistoryInterval,
-  type DetailMode
+  parsePriceHistoryInterval
 } from "@/lib/opportunity-detail";
 import { formatSnapshotError, getSnapshot } from "@/lib/snapshot";
 
@@ -19,8 +18,6 @@ function parseQuoteSize(value: string | null, fallback: number) {
 export async function GET(request: NextRequest) {
   const marketId = request.nextUrl.searchParams.get("marketId");
   const tokenId = request.nextUrl.searchParams.get("tokenId");
-  const modeParam = request.nextUrl.searchParams.get("mode");
-  const mode: DetailMode = modeParam === "two" ? "two" : "single";
 
   if (!marketId || !tokenId) {
     return Response.json(
@@ -31,10 +28,10 @@ export async function GET(request: NextRequest) {
 
   try {
     const snapshot = await getSnapshot();
-    const dataset =
-      mode === "two"
-        ? snapshot.opportunities.twoSided.rows
-        : snapshot.opportunities.singleSided.rows;
+    const dataset = [
+      ...snapshot.opportunities.neutral.rows,
+      ...snapshot.opportunities.extreme.rows
+    ];
     const row = dataset.find(
       (candidate) =>
         candidate.marketId === marketId && candidate.tokenId === tokenId
@@ -61,7 +58,6 @@ export async function GET(request: NextRequest) {
     const payload = computeOpportunityDetail({
       row,
       meta: snapshot.meta,
-      mode,
       quoteSizeUsdc,
       bids: liveBook.bids,
       asks: liveBook.asks,

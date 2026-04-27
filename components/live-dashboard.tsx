@@ -24,7 +24,6 @@ import {
 } from "lucide-react";
 
 import type {
-  DetailMode,
   OpportunityDetailPayload,
   PriceHistoryInterval
 } from "@/lib/opportunity-detail";
@@ -56,6 +55,7 @@ type Props = {
 type TimingFilter = EventTiming | "all";
 type ScannerSort =
   | "effectiveApr"
+  | "twoSidedApr"
   | "rawApr"
   | "rewardDailyRate"
   | "soonest"
@@ -241,8 +241,8 @@ function parsePositiveNumber(value: string) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function rowKey(row: OpportunityRow, mode: DetailMode) {
-  return `${mode}:${row.marketId}:${row.tokenId}`;
+function rowKey(row: OpportunityRow) {
+  return `${row.marketId}:${row.tokenId}`;
 }
 
 function toFiniteNumber(value: unknown) {
@@ -1052,8 +1052,12 @@ function LPDetailsPanel({
                 />
                 <MetricCell label="Raw APR" value={formatPercent(liveDetail.rawApr)} />
                 <MetricCell
-                  label="Effective APR"
+                  label="Eff APR (1-sided)"
                   value={formatPercent(liveDetail.effectiveApr)}
+                />
+                <MetricCell
+                  label="Eff APR (2-sided)"
+                  value={formatPercent(liveDetail.twoSidedApr)}
                 />
                 <MetricCell
                   label="Pricing zone"
@@ -1083,6 +1087,7 @@ function LPDetailsPanel({
 function ScannerRowCard({
   row,
   displayedApr,
+  displayedTwoSidedApr,
   timeToStart,
   expanded,
   onToggle,
@@ -1097,6 +1102,7 @@ function ScannerRowCard({
 }: {
   row: OpportunityRow;
   displayedApr: number | null;
+  displayedTwoSidedApr: number | null;
   timeToStart: string;
   expanded: boolean;
   onToggle: () => void;
@@ -1151,8 +1157,8 @@ function ScannerRowCard({
         </div>
 
         <div className="market-metrics scanner-metrics">
-          <MetricCell label="Displayed APR" value={formatPercent(displayedApr)} />
-          <MetricCell label="Raw APR" value={formatPercent(row.rawApr)} />
+          <MetricCell label="Eff APR (1-sided)" value={formatPercent(displayedApr)} />
+          <MetricCell label="Eff APR (2-sided)" value={formatPercent(displayedTwoSidedApr)} />
           <MetricCell label="Reward / day" value={formatMoney(row.rewardDailyRate)} />
           <MetricCell label="Queue x" value={formatMultiple(row.queueMultiple)} />
           <MetricCell label="Spread x" value={formatMultiple(row.spreadRatio)} />
@@ -1221,7 +1227,7 @@ export function LiveDashboard({
   const [scannerTag, setScannerTag] = useState("");
   const [minApr, setMinApr] = useState("");
   const [scannerRows, setScannerRows] = useState(40);
-  const [twoSided, setTwoSided] = useState(false);
+  const [showExtreme, setShowExtreme] = useState(false);
   const [scannerSort, setScannerSort] = useState<ScannerSort>("effectiveApr");
 
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
@@ -1236,10 +1242,10 @@ export function LiveDashboard({
   });
 
   useEffect(() => {
-    setScannerSort(twoSided ? "rawApr" : "effectiveApr");
+    setScannerSort("effectiveApr");
     setExpandedKey(null);
     setDetailState({ key: null, loading: false, error: null, data: null });
-  }, [twoSided]);
+  }, [showExtreme]);
 
   useEffect(() => {
     setCountdownNowMs(Date.now());
@@ -1292,16 +1298,15 @@ export function LiveDashboard({
   }, []);
 
   const meta = scanner?.meta ?? null;
-  const activeScannerRows = twoSided
-    ? scanner?.twoSided.rows ?? []
-    : scanner?.singleSided.rows ?? [];
-  const detailMode: DetailMode = twoSided ? "two" : "single";
+  const activeScannerRows = showExtreme
+    ? scanner?.extreme.rows ?? []
+    : scanner?.neutral.rows ?? [];
   const defaultQuoteSize = meta?.quoteSizeUsdc ?? 1000;
   const parsedQuoteSize = parsePositiveNumber(quoteSizeInput) ?? defaultQuoteSize;
   const isStale = meta?.snapshotHealth === "stale";
   const hasAnyData =
-    (scanner?.singleSided.rows.length ?? 0) > 0 ||
-    (scanner?.twoSided.rows.length ?? 0) > 0;
+    (scanner?.neutral.rows.length ?? 0) > 0 ||
+    (scanner?.extreme.rows.length ?? 0) > 0;
   const visibleTags = useMemo(
     () =>
       Array.from(new Set(activeScannerRows.flatMap((row) => row.tags))).sort((left, right) =>
@@ -1340,7 +1345,7 @@ export function LiveDashboard({
       }
 
       if (Number.isFinite(minAprValue)) {
-        const displayedApr = twoSided ? row.rawApr : row.effectiveApr;
+        const displayedApr = row.effectiveApr;
         if ((displayedApr ?? Number.NEGATIVE_INFINITY) < minAprValue) {
           return false;
         }
@@ -1351,6 +1356,12 @@ export function LiveDashboard({
 
     rows.sort((left, right) => {
       switch (scannerSort) {
+        case "twoSidedApr":
+          return (
+            compareNullableDesc(left.twoSidedApr, right.twoSidedApr) ||
+            compareNullableDesc(left.effectiveApr, right.effectiveApr) ||
+            right.rewardDailyRate - left.rewardDailyRate
+          );
         case "rawApr":
           return (
             compareNullableDesc(left.rawApr, right.rawApr) ||
@@ -1374,7 +1385,7 @@ export function LiveDashboard({
         default:
           return (
             compareNullableDesc(left.effectiveApr, right.effectiveApr) ||
-            compareNullableDesc(left.rawApr, right.rawApr) ||
+            compareNullableDesc(left.twoSidedApr, right.twoSidedApr) ||
             right.rewardDailyRate - left.rewardDailyRate
           );
       }
@@ -1389,23 +1400,23 @@ export function LiveDashboard({
     scannerSort,
     scannerTag,
     scannerTiming,
-    twoSided
+    showExtreme
   ]);
 
   useEffect(() => {
     if (
       expandedKey &&
-      !filteredScannerRows.some((row) => rowKey(row, detailMode) === expandedKey)
+      !filteredScannerRows.some((row) => rowKey(row) === expandedKey)
     ) {
       setExpandedKey(null);
       setDetailState({ key: null, loading: false, error: null, data: null });
     }
-  }, [detailMode, expandedKey, filteredScannerRows]);
+  }, [expandedKey, filteredScannerRows]);
 
   const expandedRow =
     expandedKey === null
       ? null
-      : filteredScannerRows.find((row) => rowKey(row, detailMode) === expandedKey) ??
+      : filteredScannerRows.find((row) => rowKey(row) === expandedKey) ??
         null;
 
   useEffect(() => {
@@ -1414,7 +1425,7 @@ export function LiveDashboard({
       return;
     }
 
-    const requestKey = rowKey(expandedRow, detailMode);
+    const requestKey = rowKey(expandedRow);
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
@@ -1428,7 +1439,6 @@ export function LiveDashboard({
         const params = new URLSearchParams({
           marketId: expandedRow.marketId,
           tokenId: expandedRow.tokenId,
-          mode: detailMode,
           quoteSizeUsdc: String(parsedQuoteSize),
           interval: priceHistoryInterval
         });
@@ -1470,7 +1480,7 @@ export function LiveDashboard({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [detailMode, expandedRow, meta, parsedQuoteSize, priceHistoryInterval]);
+  }, [expandedRow, meta, parsedQuoteSize, priceHistoryInterval]);
 
   const staleMessage = meta?.warning
     ? `Snapshot published ${formatTimestamp(meta.generatedAt)} (${formatDurationFromMs(
@@ -1542,9 +1552,8 @@ export function LiveDashboard({
               value={scannerSort}
               onChange={(event) => setScannerSort(event.target.value as ScannerSort)}
             >
-              <option value={twoSided ? "rawApr" : "effectiveApr"}>
-                {twoSided ? "Raw APR" : "Effective APR"}
-              </option>
+              <option value="effectiveApr">Effective APR (1-sided)</option>
+              <option value="twoSidedApr">Effective APR (2-sided)</option>
               <option value="rewardDailyRate">Reward / day</option>
               <option value="soonest">Soonest</option>
               <option value="queueMultiple">Queue x</option>
@@ -1590,18 +1599,18 @@ export function LiveDashboard({
           </div>
 
           <div className="toggle-group">
-            <span>Mode</span>
+            <span>Zone</span>
             <FilterToggle
-              label="Single-sided"
-              value="single"
-              active={!twoSided}
-              onClick={() => setTwoSided(false)}
+              label="Neutral"
+              value="neutral"
+              active={!showExtreme}
+              onClick={() => setShowExtreme(false)}
             />
             <FilterToggle
-              label="Two-sided"
-              value="two"
-              active={twoSided}
-              onClick={() => setTwoSided(true)}
+              label="Extreme"
+              value="extreme"
+              active={showExtreme}
+              onClick={() => setShowExtreme(true)}
             />
           </div>
         </div>
@@ -1615,13 +1624,14 @@ export function LiveDashboard({
 
       <section className="market-list" aria-live="polite">
         {filteredScannerRows.map((row) => {
-          const key = rowKey(row, detailMode);
+          const key = rowKey(row);
           const expanded = expandedKey === key;
           return (
             <ScannerRowCard
               key={key}
               row={row}
-              displayedApr={twoSided ? row.rawApr : row.effectiveApr}
+              displayedApr={row.effectiveApr}
+              displayedTwoSidedApr={row.twoSidedApr}
               timeToStart={formatLiveTimeToStart(
                 row.eventStartTime,
                 row.timeToStartHuman,

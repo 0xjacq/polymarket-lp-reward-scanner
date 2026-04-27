@@ -46,7 +46,7 @@ pub fn print_json(opportunities: &[Opportunity]) -> Result<()> {
     Ok(())
 }
 
-pub fn print_table(opportunities: &[Opportunity], two_sided: bool) {
+pub fn print_table(opportunities: &[Opportunity]) {
     let mut table = Table::new();
     table.load_preset(UTF8_FULL);
     table.set_content_arrangement(ContentArrangement::Dynamic);
@@ -57,7 +57,8 @@ pub fn print_table(opportunities: &[Opportunity], two_sided: bool) {
         "Side",
         "Zone",
         "Comp",
-        "Eff APR",
+        "Eff 1-APR",
+        "Eff 2-APR",
         "Raw APR",
         "Ceiling APR",
         "Rate/Day",
@@ -78,6 +79,7 @@ pub fn print_table(opportunities: &[Opportunity], two_sided: bool) {
                 2,
             )),
             Cell::new(format_optional_decimal(opportunity.apr_effective, 2)),
+            Cell::new(format_optional_decimal(opportunity.two_sided_apr, 2)),
             Cell::new(format_optional_decimal(opportunity.apr_estimated, 2)),
             Cell::new(format_optional_decimal(opportunity.apr_ceiling, 2)),
             Cell::new(format_decimal(opportunity.reward_daily_rate, 2)),
@@ -91,10 +93,6 @@ pub fn print_table(opportunities: &[Opportunity], two_sided: bool) {
     }
 
     println!("{table}");
-
-    if !two_sided {
-        println!("Note: APR shown is effective single-sided APR with /3 penalty in neutral zone.");
-    }
 
     let high_apr_count = opportunities
         .iter()

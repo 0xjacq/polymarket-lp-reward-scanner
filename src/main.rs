@@ -247,7 +247,7 @@ async fn main() -> Result<()> {
     if args.json {
         display::print_json(&opportunities)?;
     } else {
-        display::print_table(&opportunities, args.two_sided);
+        display::print_table(&opportunities);
     }
 
     Ok(())
