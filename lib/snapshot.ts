@@ -197,8 +197,11 @@ function normalizeSnapshot(raw: unknown, source: SnapshotSource): SnapshotPayloa
   const input = asRecord(raw);
   const dashboard = asRecord(input.dashboard);
   const opportunities = asRecord(input.opportunities);
-  const neutral = asRecord(opportunities.neutral);
-  const extreme = asRecord(opportunities.extreme);
+
+  // Backwards-compat: accept the old singleSided/twoSided keys until the new
+  // Rust snapshot format (neutral/extreme) is published by GitHub Actions.
+  const rawNeutral = asRecord(opportunities.neutral ?? opportunities.singleSided);
+  const rawExtreme = asRecord(opportunities.extreme ?? opportunities.twoSided);
 
   return {
     meta: normalizeMeta(input.meta, source),
@@ -210,13 +213,13 @@ function normalizeSnapshot(raw: unknown, source: SnapshotSource): SnapshotPayloa
     },
     opportunities: {
       neutral: {
-        rows: Array.isArray(neutral.rows)
-          ? neutral.rows.map(normalizeOpportunityRow)
+        rows: Array.isArray(rawNeutral.rows)
+          ? rawNeutral.rows.map(normalizeOpportunityRow)
           : []
       },
       extreme: {
-        rows: Array.isArray(extreme.rows)
-          ? extreme.rows.map(normalizeOpportunityRow)
+        rows: Array.isArray(rawExtreme.rows)
+          ? rawExtreme.rows.map(normalizeOpportunityRow)
           : []
       }
     }
