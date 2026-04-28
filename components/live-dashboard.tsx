@@ -599,40 +599,40 @@ function PriceHistoryChart({
       height: 340,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#94a3b8",
-        fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
-        fontSize: 12
+        textColor: "#8892aa",
+        fontFamily: "'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace",
+        fontSize: 11
       },
       localization: {
         timeFormatter: formatChartTime
       },
       grid: {
-        vertLines: { color: "rgba(51, 65, 85, 0.16)" },
+        vertLines: { color: "rgba(30, 35, 48, 0.5)" },
         horzLines: {
-          color: "rgba(71, 85, 105, 0.38)",
+          color: "rgba(30, 35, 48, 0.7)",
           style: LineStyle.Dashed
         }
       },
       crosshair: {
-        vertLine: { color: "rgba(125, 211, 252, 0.32)", width: 1 },
-        horzLine: { color: "rgba(125, 211, 252, 0.32)", width: 1 }
+        vertLine: { color: "rgba(39, 209, 127, 0.28)", width: 1 },
+        horzLine: { color: "rgba(39, 209, 127, 0.28)", width: 1 }
       },
       rightPriceScale: {
-        borderColor: "rgba(51, 65, 85, 0.65)",
+        borderColor: "rgba(37, 42, 56, 0.65)",
         scaleMargins: { top: 0.18, bottom: 0.16 }
       },
       timeScale: {
-        borderColor: "rgba(51, 65, 85, 0.65)",
+        borderColor: "rgba(37, 42, 56, 0.65)",
         timeVisible: true,
         secondsVisible: false,
         tickMarkFormatter: formatChartTime
       }
     });
     const areaSeries = chart.addSeries(AreaSeries, {
-      lineColor: "#8ec5ff",
-      lineWidth: 3,
-      topColor: "rgba(56, 189, 248, 0.28)",
-      bottomColor: "rgba(15, 23, 42, 0.02)",
+      lineColor: "oklch(72% 0.18 145 / 0.9)",
+      lineWidth: 2,
+      topColor: "oklch(72% 0.18 145 / 0.22)",
+      bottomColor: "rgba(11, 12, 14, 0.02)",
       priceFormat: {
         type: "custom",
         formatter: (price: number) => `${formatNumber(price, 1)}¢`
@@ -1056,6 +1056,14 @@ function LPDetailsPanel({
                   value={formatPercent(liveDetail.effectiveApr)}
                 />
                 <MetricCell
+                  label="APR range (low-high)"
+                  value={
+                    liveDetail.aprLower !== null || liveDetail.aprUpper !== null
+                      ? `${formatPercent(liveDetail.aprLower)} – ${formatPercent(liveDetail.aprUpper)}`
+                      : "-"
+                  }
+                />
+                <MetricCell
                   label="Eff APR (2-sided)"
                   value={formatPercent(liveDetail.twoSidedApr)}
                 />
@@ -1130,21 +1138,22 @@ function ScannerRowCard({
 
   return (
     <Card className="market-row">
-      <div className="market-visual">
-        {row.image ? (
-          <img src={row.image} alt="" loading="lazy" />
-        ) : (
-          <div className="image-fallback">{row.question.slice(0, 1).toUpperCase()}</div>
-        )}
-      </div>
-
       <div className="market-main">
         <div className="market-heading">
           <div className="heading-copy">
-            <h2>{question}</h2>
-            <p className="market-subhead">
-              {row.sideToTrade} · {humanize(row.status)} · {humanize(row.reason)}
-            </p>
+            <div className="market-visual">
+              {row.image ? (
+                <img src={row.image} alt="" loading="lazy" />
+              ) : (
+                <div className="image-fallback">{row.question.slice(0, 1).toUpperCase()}</div>
+              )}
+            </div>
+            <div className="heading-text">
+              <h2>{question}</h2>
+              <p className="market-subhead">
+                {row.sideToTrade} · {humanize(row.status)} · {humanize(row.reason)}
+              </p>
+            </div>
           </div>
 
           <div className="tag-list">
@@ -1167,9 +1176,17 @@ function ScannerRowCard({
             value={formatNumber(row.marketCompetitiveness, 2)}
           />
           <MetricCell label="Event time" value={formatTimestamp(row.eventStartTime)} />
-          <MetricCell label="Time to start" value={timeToStart} />
           <MetricCell label="Timing" value={humanize(row.eventTiming)} />
           <MetricCell label="Suggested price" value={formatPrice(row.suggestedPrice)} />
+          <MetricCell label="Time to start" value={timeToStart} />
+          <MetricCell
+            label="APR range (low-high)"
+            value={
+              row.aprLower !== null || row.aprUpper !== null
+                ? `${formatPercent(row.aprLower)} – ${formatPercent(row.aprUpper)}`
+                : formatPercent(displayedApr)
+            }
+          />
         </div>
 
         <div className="market-actions">
@@ -1623,6 +1640,20 @@ export function LiveDashboard({
       ) : null}
 
       <section className="market-list" aria-live="polite">
+        <div className="market-row-header" aria-hidden="true">
+          <div></div>
+          <div>Market</div>
+          <div>Tags</div>
+          <div>APR 1-sided</div>
+          <div>APR 2-sided</div>
+          <div>Reward/day</div>
+          <div>Queue x</div>
+          <div>Spread x</div>
+          <div>Comp</div>
+          <div>Price</div>
+          <div>Time</div>
+          <div></div>
+        </div>
         {filteredScannerRows.map((row) => {
           const key = rowKey(row);
           const expanded = expandedKey === key;
