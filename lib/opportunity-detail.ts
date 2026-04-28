@@ -235,7 +235,7 @@ function suggestedBidPrice(
 
   if (
     tickSize > 0 &&
-    scoreWeight(spreadBand, midpoint - candidate) === 0
+    (scoreWeight(spreadBand, midpoint - candidate) ?? 0) <= EPSILON
   ) {
     candidate = roundToTick(candidate + tickSize, tickSize);
   }
@@ -603,7 +603,7 @@ export function computeOpportunityDetail(input: {
     rewardsMaxSpread: row.rewardsMaxSpread,
     rewardsMinSize: row.rewardsMinSize,
     rewardFloorPrice,
-    inBandUpperPrice: midpoint,
+    inBandUpperPrice: askUpperPrice,
     suggestedPrice,
     ownShares,
     minimumQualifyingUsdc,
