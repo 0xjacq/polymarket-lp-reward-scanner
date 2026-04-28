@@ -115,8 +115,12 @@ pub struct SnapshotOpportunityRow {
     pub apr_ceiling: Option<Decimal>,
     pub raw_apr: Option<Decimal>,
     pub effective_apr: Option<Decimal>,
+    pub apr_lower: Option<Decimal>,
+    pub apr_upper: Option<Decimal>,
     pub two_sided_apr: Option<Decimal>,
     pub suggested_price: Option<Decimal>,
+    pub suggested_price_lower: Option<Decimal>,
+    pub suggested_price_upper: Option<Decimal>,
     pub queue_multiple: Option<Decimal>,
 }
 
@@ -438,8 +442,12 @@ fn build_opportunity_rows(
                 apr_ceiling: opportunity.apr_ceiling,
                 raw_apr: opportunity.apr_estimated,
                 effective_apr: opportunity.apr_effective,
+                apr_lower: opportunity.apr_lower,
+                apr_upper: opportunity.apr_upper,
                 two_sided_apr: opportunity.two_sided_apr,
                 suggested_price: opportunity.suggested_price,
+                suggested_price_lower: opportunity.suggested_price_lower,
+                suggested_price_upper: opportunity.suggested_price_upper,
                 queue_multiple: opportunity.liquidity_info.queue_multiple,
             }
         })
@@ -579,8 +587,12 @@ mod tests {
             apr_ceiling: Some(dec!(100)),
             apr_estimated: Some(dec!(25)),
             apr_effective: Some(dec!(8.33)),
+            apr_lower: Some(dec!(12)),
+            apr_upper: Some(dec!(80)),
             two_sided_apr: Some(dec!(25)),
             suggested_price: Some(dec!(0.48)),
+            suggested_price_lower: Some(dec!(0.465)),
+            suggested_price_upper: Some(dec!(0.50)),
             liquidity_info: LiquidityInfo {
                 best_bid: Some(dec!(0.47)),
                 best_ask: Some(dec!(0.49)),
@@ -667,8 +679,12 @@ mod tests {
             apr_ceiling: Some(dec!(100)),
             raw_apr: Some(dec!(25)),
             effective_apr: Some(dec!(8.33)),
+            apr_lower: Some(dec!(12)),
+            apr_upper: Some(dec!(80)),
             two_sided_apr: Some(dec!(25)),
             suggested_price: Some(dec!(0.48)),
+            suggested_price_lower: Some(dec!(0.465)),
+            suggested_price_upper: Some(dec!(0.50)),
             queue_multiple: Some(dec!(2.5)),
         };
 

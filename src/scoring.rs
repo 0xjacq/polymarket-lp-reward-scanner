@@ -27,8 +27,12 @@ struct TokenDecision {
     apr_ceiling: Option<Decimal>,
     apr_estimated: Option<Decimal>,
     apr_effective: Option<Decimal>,
+    apr_lower: Option<Decimal>,
+    apr_upper: Option<Decimal>,
     two_sided_apr: Option<Decimal>,
     suggested_price: Option<Decimal>,
+    suggested_price_lower: Option<Decimal>,
+    suggested_price_upper: Option<Decimal>,
     liquidity_info: LiquidityInfo,
 }
 
@@ -134,8 +138,12 @@ fn inspect_token(
         apr_ceiling: None,
         apr_estimated: None,
         apr_effective: None,
+        apr_lower: None,
+        apr_upper: None,
         two_sided_apr: None,
         suggested_price: None,
+        suggested_price_lower: None,
+        suggested_price_upper: None,
         liquidity_info: LiquidityInfo {
             best_bid: None,
             best_ask: None,
@@ -289,6 +297,46 @@ fn inspect_token(
     decision.apr_estimated = Some(apr_estimated);
     decision.apr_effective = Some(apr_single);
     decision.two_sided_apr = Some(apr_two);
+
+    decision.suggested_price_lower = price_at_band_fraction(
+        reward_floor_price,
+        spread_band,
+        config::APR_LOWER_BAND_FRACTION,
+        book.tick_size,
+        best_ask,
+    );
+    decision.apr_lower = decision.suggested_price_lower.and_then(|price| {
+        apr_at_price(
+            eligible,
+            &book.bids,
+            quote_size_usdc,
+            adjusted_midpoint,
+            spread_band,
+            reward_floor_price,
+            pricing_zone,
+            price,
+        )
+    });
+    decision.suggested_price_upper = price_at_band_fraction(
+        reward_floor_price,
+        spread_band,
+        config::APR_UPPER_BAND_FRACTION,
+        book.tick_size,
+        best_ask,
+    );
+    decision.apr_upper = decision.suggested_price_upper.and_then(|price| {
+        apr_at_price(
+            eligible,
+            &book.bids,
+            quote_size_usdc,
+            adjusted_midpoint,
+            spread_band,
+            reward_floor_price,
+            pricing_zone,
+            price,
+        )
+    });
+
     decision
 }
 
@@ -402,6 +450,53 @@ fn effective_apr(apr_estimated: Decimal, pricing_zone: PricingZone, two_sided: b
         PricingZone::Extreme => dec!(0),
         PricingZone::Neutral => apr_estimated / Decimal::from(config::SINGLE_SIDED_PENALTY),
     }
+}
+
+fn price_at_band_fraction(
+    reward_floor_price: Decimal,
+    spread_band: Decimal,
+    fraction: f64,
+    tick_size: Decimal,
+    best_ask: Decimal,
+) -> Option<Decimal> {
+    let fraction_decimal = fraction.to_string().parse::<Decimal>().ok()?;
+    let distance = spread_band * fraction_decimal;
+    let price = ceil_to_tick(reward_floor_price + distance, tick_size);
+    if price >= best_ask {
+        return None;
+    }
+    Some(price)
+}
+
+fn apr_at_price(
+    eligible: &EligibleMarket,
+    bids: &[BookLevel],
+    quote_size_usdc: Decimal,
+    midpoint: Decimal,
+    spread_band: Decimal,
+    reward_floor: Decimal,
+    pricing_zone: PricingZone,
+    quote_price: Decimal,
+) -> Option<Decimal> {
+    let own_shares = quote_size_usdc / quote_price;
+    if own_shares < eligible.reward.rewards_min_size {
+        return None;
+    }
+
+    let distance = midpoint - quote_price;
+    let our_score = score_weight(spread_band, distance)?;
+    let our_weight = our_score * own_shares;
+
+    let visible_weight = visible_weight(bids, midpoint, spread_band, reward_floor);
+    let denominator = our_weight + visible_weight;
+    if denominator <= dec!(0) {
+        return None;
+    }
+
+    let raw = eligible.reward.reward_daily_rate * (our_weight / denominator) * dec!(36500)
+        / quote_size_usdc;
+    let effective = effective_apr(raw, pricing_zone, false);
+    Some(effective)
 }
 
 fn compare_token_decisions(left: &TokenDecision, right: &TokenDecision) -> std::cmp::Ordering {
@@ -643,8 +738,12 @@ fn to_opportunity(candidate: TokenDecision) -> Opportunity {
         apr_ceiling: candidate.apr_ceiling,
         apr_estimated: candidate.apr_estimated,
         apr_effective: candidate.apr_effective,
+        apr_lower: candidate.apr_lower,
+        apr_upper: candidate.apr_upper,
         two_sided_apr: candidate.two_sided_apr,
         suggested_price: candidate.suggested_price,
+        suggested_price_lower: candidate.suggested_price_lower,
+        suggested_price_upper: candidate.suggested_price_upper,
         liquidity_info: candidate.liquidity_info,
     }
 }

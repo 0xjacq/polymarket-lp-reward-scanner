@@ -14,6 +14,8 @@ pub const BOOK_SHORTLIST_MIN: usize = 500;
 pub const COMPETITIVENESS_SHORTLIST_MULTIPLIER: usize = 5;
 pub const COMPETITIVENESS_SHORTLIST_MIN: usize = 300;
 pub const SINGLE_SIDED_PENALTY: u32 = 3;
+pub const APR_UPPER_BAND_FRACTION: f64 = 0.45;
+pub const APR_LOWER_BAND_FRACTION: f64 = 0.10;
 
 pub const GAMMA_BATCH_SIZE: usize = 50;
 pub const GAMMA_CONCURRENCY: usize = 8;

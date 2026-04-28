@@ -8,6 +8,8 @@ import {
 const CLOB_BOOK_URL = "https://clob.polymarket.com/book";
 const CLOB_PRICE_HISTORY_URL = "https://clob.polymarket.com/prices-history";
 const SINGLE_SIDED_PENALTY = 3;
+const APR_LOWER_BAND_FRACTION = 0.10;
+const APR_UPPER_BAND_FRACTION = 0.45;
 const EPSILON = 1e-9;
 
 export type DetailPricingZone = "neutral" | "extreme";
@@ -69,6 +71,8 @@ export type OpportunityDetailPayload = {
   aprCeiling: number | null;
   rawApr: number | null;
   effectiveApr: number | null;
+  aprLower: number | null;
+  aprUpper: number | null;
   twoSidedApr: number | null;
   spreadRatio: number | null;
   distanceToAsk: number | null;
@@ -251,6 +255,55 @@ function effectiveApr(rawApr: number, pricingZone: DetailPricingZone, side: "sin
   return pricingZone === "neutral" ? rawApr / SINGLE_SIDED_PENALTY : 0;
 }
 
+function priceAtBandFraction(
+  rewardFloorPrice: number,
+  spreadBand: number,
+  fraction: number,
+  tickSize: number,
+  bestAsk: number,
+) {
+  const price = ceilToTick(rewardFloorPrice + spreadBand * fraction, tickSize);
+  if (price >= bestAsk - EPSILON) {
+    return null;
+  }
+  return price;
+}
+
+function aprAtPrice(
+  inputs: {
+    row: OpportunityRow;
+    midpoint: number;
+    spreadBand: number;
+    rewardFloor: number;
+    pricingZone: DetailPricingZone;
+    quoteSizeUsdc: number;
+    bids: BookLevel[];
+  },
+  quotePrice: number,
+) {
+  const { row, midpoint, spreadBand, rewardFloor, pricingZone, quoteSizeUsdc, bids } = inputs;
+  const ownShares = quoteSizeUsdc / quotePrice;
+  if (ownShares < row.rewardsMinSize) {
+    return null;
+  }
+
+  const distance = midpoint - quotePrice;
+  const ourScore = scoreWeight(spreadBand, distance);
+  if (ourScore === null) {
+    return null;
+  }
+
+  const ourWeight = ourScore * ownShares;
+  const bookVisibleWeight = visibleWeight(bids, midpoint, spreadBand, rewardFloor);
+  const denominator = ourWeight + bookVisibleWeight;
+  if (denominator <= 0) {
+    return null;
+  }
+
+  const rawApr = row.rewardDailyRate * (ourWeight / denominator) * 36500 / quoteSizeUsdc;
+  return effectiveApr(rawApr, pricingZone, "single");
+}
+
 function toPricingZone(midpoint: number): DetailPricingZone {
   return midpoint >= 0.1 && midpoint <= 0.9 ? "neutral" : "extreme";
 }
@@ -418,6 +471,10 @@ export function computeOpportunityDetail(input: {
   let effectiveAprValue: number | null = null;
   let twoSidedAprValue: number | null = null;
   let askUpperPrice: number | null = null;
+  let aprLower: number | null = null;
+  let aprUpper: number | null = null;
+  let suggestedPriceLower: number | null = null;
+  let suggestedPriceUpper: number | null = null;
 
   if (midpoint !== null && bestAsk !== null) {
     status = "skip";
@@ -499,6 +556,26 @@ export function computeOpportunityDetail(input: {
                 pricingZone === null ? null : effectiveApr(rawApr, pricingZone, "two");
               status = "candidate_now";
               reason = "in_band";
+
+              const aprInputs = {
+                row,
+                midpoint,
+                spreadBand,
+                rewardFloor: rewardFloorPrice,
+                pricingZone: pricingZone!,
+                quoteSizeUsdc,
+                bids,
+              };
+              suggestedPriceLower = priceAtBandFraction(
+                rewardFloorPrice, spreadBand, APR_LOWER_BAND_FRACTION, tickSize, bestAsk
+              );
+              aprLower = suggestedPriceLower === null ? null
+                : aprAtPrice(aprInputs, suggestedPriceLower);
+              suggestedPriceUpper = priceAtBandFraction(
+                rewardFloorPrice, spreadBand, APR_UPPER_BAND_FRACTION, tickSize, bestAsk
+              );
+              aprUpper = suggestedPriceUpper === null ? null
+                : aprAtPrice(aprInputs, suggestedPriceUpper);
             }
           }
         }
@@ -537,6 +614,8 @@ export function computeOpportunityDetail(input: {
     aprCeiling,
     rawApr,
     effectiveApr: effectiveAprValue,
+    aprLower,
+    aprUpper,
     twoSidedApr: twoSidedAprValue,
     spreadRatio,
     distanceToAsk,

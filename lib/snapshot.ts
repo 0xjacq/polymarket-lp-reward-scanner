@@ -63,8 +63,12 @@ export type OpportunityRow = {
   aprCeiling: number | null;
   rawApr: number | null;
   effectiveApr: number | null;
+  aprLower: number | null;
+  aprUpper: number | null;
   twoSidedApr: number | null;
   suggestedPrice: number | null;
+  suggestedPriceLower: number | null;
+  suggestedPriceUpper: number | null;
   queueMultiple: number | null;
 };
 
@@ -187,8 +191,12 @@ function normalizeOpportunityRow(value: unknown): OpportunityRow {
     aprCeiling: toNumber(input.aprCeiling),
     rawApr: toNumber(input.rawApr),
     effectiveApr: toNumber(input.effectiveApr),
+    aprLower: toNumber(input.aprLower),
+    aprUpper: toNumber(input.aprUpper),
     twoSidedApr: toNumber(input.twoSidedApr),
     suggestedPrice: toNumber(input.suggestedPrice),
+    suggestedPriceLower: toNumber(input.suggestedPriceLower),
+    suggestedPriceUpper: toNumber(input.suggestedPriceUpper),
     queueMultiple: toNumber(input.queueMultiple)
   };
 }
