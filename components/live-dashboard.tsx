@@ -42,10 +42,9 @@ import type {
 } from "@/lib/snapshot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 
 type Props = {
   initialScanner: ScannerResponse | null;
@@ -293,6 +292,7 @@ function FilterToggle({
 }) {
   return (
     <Button
+      aria-pressed={active}
       className={active ? "toggle-chip active" : "toggle-chip"}
       onClick={() => onClick(value)}
       type="button"
@@ -593,46 +593,57 @@ function PriceHistoryChart({
     if (!container || history.length === 0) {
       return;
     }
+    const rootStyles = window.getComputedStyle(document.documentElement);
+    const cssVar = (name: string, fallback: string) =>
+      rootStyles.getPropertyValue(name).trim() || fallback;
+    const textColor = cssVar("--muted", "#9cb1c8");
+    const borderColor = cssVar("--border", "#233246");
+    const accent = cssVar("--green", "#39d98a");
+    const monoFont = cssVar(
+      "--mono",
+      "'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace"
+    );
+    const crosshairColor = "rgba(57, 217, 138, 0.28)";
 
     const chart = createChart(container, {
       autoSize: true,
       height: 340,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#8892aa",
-        fontFamily: "'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace",
+        textColor,
+        fontFamily: monoFont,
         fontSize: 11
       },
       localization: {
         timeFormatter: formatChartTime
       },
       grid: {
-        vertLines: { color: "rgba(30, 35, 48, 0.5)" },
+        vertLines: { color: borderColor },
         horzLines: {
-          color: "rgba(30, 35, 48, 0.7)",
+          color: borderColor,
           style: LineStyle.Dashed
         }
       },
       crosshair: {
-        vertLine: { color: "rgba(39, 209, 127, 0.28)", width: 1 },
-        horzLine: { color: "rgba(39, 209, 127, 0.28)", width: 1 }
+        vertLine: { color: crosshairColor, width: 1 },
+        horzLine: { color: crosshairColor, width: 1 }
       },
       rightPriceScale: {
-        borderColor: "rgba(37, 42, 56, 0.65)",
+        borderColor,
         scaleMargins: { top: 0.18, bottom: 0.16 }
       },
       timeScale: {
-        borderColor: "rgba(37, 42, 56, 0.65)",
+        borderColor,
         timeVisible: true,
         secondsVisible: false,
         tickMarkFormatter: formatChartTime
       }
     });
     const areaSeries = chart.addSeries(AreaSeries, {
-      lineColor: "oklch(72% 0.18 145 / 0.9)",
+      lineColor: accent,
       lineWidth: 2,
-      topColor: "oklch(72% 0.18 145 / 0.22)",
-      bottomColor: "rgba(11, 12, 14, 0.02)",
+      topColor: "rgba(57, 217, 138, 0.22)",
+      bottomColor: "rgba(10, 15, 20, 0.06)",
       priceFormat: {
         type: "custom",
         formatter: (price: number) => `${formatNumber(price, 1)}¢`
@@ -739,6 +750,8 @@ function PriceHistoryChart({
         <div className="chart-range-tabs" aria-label="Price history interval">
           {PRICE_HISTORY_INTERVALS.map((option) => (
             <button
+              aria-label={`Show ${option.label} price history`}
+              aria-pressed={option.value === interval}
               key={option.value}
               className={option.value === interval ? "active" : ""}
               onClick={() => onIntervalChange(option.value)}
@@ -888,6 +901,7 @@ function OrderBookVisualization({
 }
 
 function LPDetailsPanel({
+  panelId,
   row,
   detail,
   error,
@@ -898,6 +912,7 @@ function LPDetailsPanel({
   priceHistoryInterval,
   onPriceHistoryIntervalChange
 }: {
+  panelId: string;
   row: OpportunityRow;
   detail: OpportunityDetailPayload | null;
   error: string | null;
@@ -910,11 +925,16 @@ function LPDetailsPanel({
 }) {
   const streamed = usePolymarketOrderbookStream(row.tokenId, detail);
   const liveDetail = streamed.detail;
+  const missingLiveData =
+    liveDetail !== null &&
+    (liveDetail.reason === "missing_book_data" ||
+      ((liveDetail.depth.bids.length === 0 && liveDetail.depth.asks.length === 0) &&
+        liveDetail.priceHistory.length === 0));
   const liveStatusLabel =
     loading && !liveDetail ? "Refreshing live book..." : humanize(streamed.connectionState);
 
   return (
-    <section className="lp-panel">
+    <section className="lp-panel" id={panelId}>
       <div className="lp-panel-toolbar">
         <label className="control lp-quote-control">
           <span>Quote size (USDC)</span>
@@ -940,7 +960,11 @@ function LPDetailsPanel({
         </div>
       </div>
 
-      {error ? <p className="error-banner panel-banner">{error}</p> : null}
+      {error ? (
+        <p className="error-banner panel-banner" role="alert">
+          {error}
+        </p>
+      ) : null}
 
       {liveDetail ? (
         <>
@@ -949,21 +973,30 @@ function LPDetailsPanel({
             was published {formatTimestamp(liveDetail.snapshotGeneratedAt)}.
           </p>
 
-          <PriceHistoryChart
-            detail={liveDetail}
-            interval={priceHistoryInterval}
-            onIntervalChange={onPriceHistoryIntervalChange}
-            outcome={row.sideToTrade}
-          />
-          <OrderBookVisualization
-            detail={liveDetail}
-            changedLevels={streamed.changedLevels}
-            connectionState={streamed.connectionState}
-            lastEventAt={streamed.lastEventAt}
-            updateCount={streamed.updateCount}
-          />
+          {missingLiveData ? (
+            <p className="info-banner panel-banner" role="status">
+              Live order book and price history are temporarily unavailable for this
+              market. Snapshot metrics remain available below.
+            </p>
+          ) : (
+            <>
+              <PriceHistoryChart
+                detail={liveDetail}
+                interval={priceHistoryInterval}
+                onIntervalChange={onPriceHistoryIntervalChange}
+                outcome={row.sideToTrade}
+              />
+              <OrderBookVisualization
+                detail={liveDetail}
+                changedLevels={streamed.changedLevels}
+                connectionState={streamed.connectionState}
+                lastEventAt={streamed.lastEventAt}
+                updateCount={streamed.updateCount}
+              />
+            </>
+          )}
 
-          <div className="detail-sections">
+          <div className={missingLiveData ? "detail-sections detail-sections-compact" : "detail-sections"}>
             <Card className="detail-card">
               <h3>Reward rules</h3>
               <div className="detail-grid">
@@ -1008,85 +1041,114 @@ function LPDetailsPanel({
               </div>
             </Card>
 
-            <Card className="detail-card">
-              <h3>Your quote</h3>
-              <div className="detail-grid">
-                <MetricCell
-                  label="Suggested price"
-                  value={formatPrice(liveDetail.suggestedPrice)}
-                />
-                <MetricCell label="Your shares" value={formatShares(liveDetail.ownShares)} />
-                <MetricCell
-                  label="Min qualifying quote"
-                  value={formatMoney(liveDetail.minimumQualifyingUsdc)}
-                />
-                <MetricCell
-                  label="Distance to ask"
-                  value={formatPrice(liveDetail.distanceToAsk)}
-                />
-                <MetricCell
-                  label="Queue ahead"
-                  value={formatShares(liveDetail.queueAheadShares)}
-                />
-                <MetricCell
-                  label="Queue ahead notional"
-                  value={formatMoney(liveDetail.queueAheadNotional)}
-                />
-                <MetricCell
-                  label="Queue x"
-                  value={formatMultiple(liveDetail.queueMultiple)}
-                />
-                <MetricCell
-                  label="Qualifying depth"
-                  value={formatShares(liveDetail.qualifyingDepthShares)}
-                />
-              </div>
-            </Card>
+            {missingLiveData ? (
+              <Card className="detail-card">
+                <h3>Snapshot fallback</h3>
+                <div className="detail-grid">
+                  <MetricCell label="Snapshot status" value={humanize(row.status)} />
+                  <MetricCell label="Snapshot reason" value={humanize(row.reason)} />
+                  <MetricCell
+                    label="Eff APR (1-sided)"
+                    value={formatPercent(row.effectiveApr)}
+                  />
+                  <MetricCell
+                    label="Eff APR (2-sided)"
+                    value={formatPercent(row.twoSidedApr)}
+                  />
+                  <MetricCell
+                    label="Suggested price"
+                    value={formatPrice(row.suggestedPrice)}
+                  />
+                  <MetricCell label="Queue x" value={formatMultiple(row.queueMultiple)} />
+                </div>
+              </Card>
+            ) : (
+              <>
+                <Card className="detail-card">
+                  <h3>Your quote</h3>
+                  <div className="detail-grid">
+                    <MetricCell
+                      label="Suggested price"
+                      value={formatPrice(liveDetail.suggestedPrice)}
+                    />
+                    <MetricCell label="Your shares" value={formatShares(liveDetail.ownShares)} />
+                    <MetricCell
+                      label="Min qualifying quote"
+                      value={formatMoney(liveDetail.minimumQualifyingUsdc)}
+                    />
+                    <MetricCell
+                      label="Distance to ask"
+                      value={formatPrice(liveDetail.distanceToAsk)}
+                    />
+                    <MetricCell
+                      label="Queue ahead"
+                      value={formatShares(liveDetail.queueAheadShares)}
+                    />
+                    <MetricCell
+                      label="Queue ahead notional"
+                      value={formatMoney(liveDetail.queueAheadNotional)}
+                    />
+                    <MetricCell
+                      label="Queue x"
+                      value={formatMultiple(liveDetail.queueMultiple)}
+                    />
+                    <MetricCell
+                      label="Qualifying depth"
+                      value={formatShares(liveDetail.qualifyingDepthShares)}
+                    />
+                  </div>
+                </Card>
 
-            <Card className="detail-card">
-              <h3>Estimated rewards</h3>
-              <div className="detail-grid">
-                <MetricCell
-                  label="APR ceiling"
-                  value={formatPercent(liveDetail.aprCeiling)}
-                />
-                <MetricCell label="Raw APR" value={formatPercent(liveDetail.rawApr)} />
-                <MetricCell
-                  label="Eff APR (1-sided)"
-                  value={formatPercent(liveDetail.effectiveApr)}
-                />
-                <MetricCell
-                  label="APR range (low-high)"
-                  value={
-                    liveDetail.aprLower !== null || liveDetail.aprUpper !== null
-                      ? `${formatPercent(liveDetail.aprLower)} – ${formatPercent(liveDetail.aprUpper)}`
-                      : "-"
-                  }
-                />
-                <MetricCell
-                  label="Eff APR (2-sided)"
-                  value={formatPercent(liveDetail.twoSidedApr)}
-                />
-                <MetricCell
-                  label="Pricing zone"
-                  value={liveDetail.pricingZone ? humanize(liveDetail.pricingZone) : "-"}
-                />
-                <MetricCell
-                  label="Live status"
-                  value={humanize(liveDetail.status)}
-                />
-                <MetricCell
-                  label="Live reason"
-                  value={humanize(liveDetail.reason)}
-                />
-              </div>
-            </Card>
+                <Card className="detail-card">
+                  <h3>Estimated rewards</h3>
+                  <div className="detail-grid">
+                    <MetricCell
+                      label="APR ceiling"
+                      value={formatPercent(liveDetail.aprCeiling)}
+                    />
+                    <MetricCell label="Raw APR" value={formatPercent(liveDetail.rawApr)} />
+                    <MetricCell
+                      label="Eff APR (1-sided)"
+                      value={formatPercent(liveDetail.effectiveApr)}
+                    />
+                    <MetricCell
+                      label="APR range (low-high)"
+                      value={
+                        liveDetail.aprLower !== null || liveDetail.aprUpper !== null
+                          ? `${formatPercent(liveDetail.aprLower)} – ${formatPercent(liveDetail.aprUpper)}`
+                          : "-"
+                      }
+                    />
+                    <MetricCell
+                      label="Eff APR (2-sided)"
+                      value={formatPercent(liveDetail.twoSidedApr)}
+                    />
+                    <MetricCell
+                      label="Pricing zone"
+                      value={liveDetail.pricingZone ? humanize(liveDetail.pricingZone) : "-"}
+                    />
+                    <MetricCell
+                      label="Live status"
+                      value={humanize(liveDetail.status)}
+                    />
+                    <MetricCell
+                      label="Live reason"
+                      value={humanize(liveDetail.reason)}
+                    />
+                  </div>
+                </Card>
+              </>
+            )}
           </div>
         </>
       ) : loading ? (
-        <p className="info-banner panel-banner">Loading live LP diagnostics...</p>
+        <p className="info-banner panel-banner" role="status" aria-live="polite">
+          Loading live LP diagnostics...
+        </p>
       ) : (
-        <p className="detail-empty">No live diagnostics available for this row.</p>
+        <p className="detail-empty" role="status">
+          No live diagnostics available for this row.
+        </p>
       )}
     </section>
   );
@@ -1135,6 +1197,7 @@ function ScannerRowCard({
   ) : (
     row.question
   );
+  const panelId = `lp-details-${row.marketId}-${row.tokenId}`;
 
   return (
     <Card className="market-row">
@@ -1143,7 +1206,11 @@ function ScannerRowCard({
           <div className="heading-copy">
             <div className="market-visual">
               {row.image ? (
-                <img src={row.image} alt="" loading="lazy" />
+                <img
+                  src={row.image}
+                  alt={`${row.question} market image`}
+                  loading="lazy"
+                />
               ) : (
                 <div className="image-fallback">{row.question.slice(0, 1).toUpperCase()}</div>
               )}
@@ -1191,6 +1258,8 @@ function ScannerRowCard({
 
         <div className="market-actions">
           <Button
+            aria-controls={panelId}
+            aria-expanded={expanded}
             className={expanded ? "detail-button active" : "detail-button"}
             onClick={onToggle}
             type="button"
@@ -1214,6 +1283,7 @@ function ScannerRowCard({
 
         {expanded ? (
           <LPDetailsPanel
+            panelId={panelId}
             row={row}
             detail={detail}
             error={detailError}
@@ -1519,12 +1589,16 @@ export function LiveDashboard({
       </section>
 
       {staleMessage ? (
-        <p className={isStale ? "warning-banner" : "info-banner"}>
+        <p
+          className={isStale ? "warning-banner" : "info-banner"}
+          role="status"
+          aria-live="polite"
+        >
           {staleMessage}
         </p>
       ) : null}
 
-      <section className="filters-band">
+      <section className="filters-band" aria-label="Scanner filters">
         <div className="filter-grid">
           <label className="control control-wide">
             <span>Search</span>
@@ -1593,7 +1667,7 @@ export function LiveDashboard({
         </div>
 
         <div className="toggle-row">
-          <div className="toggle-group">
+          <div className="toggle-group" role="group" aria-label="Timing filter">
             <span>Timing</span>
             <FilterToggle
               label="Upcoming"
@@ -1615,7 +1689,7 @@ export function LiveDashboard({
             />
           </div>
 
-          <div className="toggle-group">
+          <div className="toggle-group" role="group" aria-label="Pricing zone filter">
             <span>Zone</span>
             <FilterToggle
               label="Neutral"
@@ -1634,12 +1708,17 @@ export function LiveDashboard({
       </section>
 
       {error ? (
-        <p className="error-banner">
+        <p className="error-banner" role="alert">
           {hasAnyData ? `${error}. Last good snapshot remains on screen.` : error}
         </p>
       ) : null}
 
-      <section className="market-list" aria-live="polite">
+      <section
+        className="market-list"
+        aria-live="polite"
+        aria-busy={loading}
+        aria-label="Opportunity rows"
+      >
         <div className="market-row-header" aria-hidden="true">
           <div></div>
           <div>Market</div>
