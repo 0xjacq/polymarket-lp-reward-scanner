@@ -6,7 +6,10 @@ use chrono::{DateTime, Utc};
 use futures::{stream, StreamExt};
 use polymarket_client_sdk::clob::{
     types::request::OrderBookSummaryRequest,
-    types::response::{CurrentRewardResponse, OrderBookSummaryResponse, Page},
+    types::response::{
+        CurrentRewardResponse, MarketResponse as ClobMarketResponse, OrderBookSummaryResponse,
+        Page,
+    },
     Client as ClobClient, Config as ClobConfig,
 };
 use polymarket_client_sdk::error::{Error as SdkError, Kind as ErrorKind, Status, StatusCode};
@@ -67,6 +70,24 @@ impl PolymarketClient {
     }
 
     pub async fn fetch_current_rewards_all(&self) -> Result<Vec<RewardProgram>> {
+        match self.fetch_current_rewards_from_current_endpoint().await {
+            Ok(rewards) if !rewards.is_empty() => return Ok(rewards),
+            Ok(_) => {
+                eprintln!(
+                    "warning: current_rewards endpoint returned no rows, falling back to sampling_markets"
+                );
+            }
+            Err(error) => {
+                eprintln!(
+                    "warning: current_rewards endpoint failed, falling back to sampling_markets: {error}"
+                );
+            }
+        }
+
+        self.fetch_current_rewards_from_sampling_markets().await
+    }
+
+    async fn fetch_current_rewards_from_current_endpoint(&self) -> Result<Vec<RewardProgram>> {
         let mut cursor = None;
         let mut rewards = Vec::new();
 
@@ -80,6 +101,37 @@ impl PolymarketClient {
             }
 
             cursor = Some(page.next_cursor);
+        }
+
+        Ok(rewards)
+    }
+
+    async fn fetch_current_rewards_from_sampling_markets(&self) -> Result<Vec<RewardProgram>> {
+        let mut cursor = None;
+        let mut rewards = Vec::new();
+
+        loop {
+            let page = self
+                .call_with_retry("sampling_markets", || self.clob.sampling_markets(cursor.clone()))
+                .await?;
+
+            rewards.extend(
+                page.data
+                    .into_iter()
+                    .filter_map(normalize_reward_from_sampling_market),
+            );
+
+            if page.next_cursor == config::CURSOR_DONE || page.next_cursor.is_empty() {
+                break;
+            }
+
+            cursor = Some(page.next_cursor);
+        }
+
+        if rewards.is_empty() {
+            return Err(anyhow::anyhow!(
+                "sampling_markets returned no reward-eligible rows"
+            ));
         }
 
         Ok(rewards)
@@ -547,6 +599,23 @@ fn normalize_reward(reward: CurrentRewardResponse) -> RewardProgram {
         rewards_max_spread: reward.rewards_max_spread,
         market_competitiveness: None,
     }
+}
+
+fn normalize_reward_from_sampling_market(market: ClobMarketResponse) -> Option<RewardProgram> {
+    let condition_id = market.condition_id?;
+    let reward_daily_rate = market
+        .rewards
+        .rates
+        .iter()
+        .fold(dec!(0), |acc, rate| acc + rate.rewards_daily_rate);
+
+    Some(RewardProgram {
+        condition_id,
+        reward_daily_rate,
+        rewards_min_size: market.rewards.min_size,
+        rewards_max_spread: market.rewards.max_spread,
+        market_competitiveness: None,
+    })
 }
 
 fn normalize_market(market: Market) -> Option<MarketSnapshot> {

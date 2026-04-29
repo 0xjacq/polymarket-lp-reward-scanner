@@ -14,6 +14,62 @@ function env(name, fallback) {
   return value;
 }
 
+function envInteger(name, fallback, { min = 0 } = {}) {
+  const raw = env(name, String(fallback));
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < min) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function runSnapshotWithRetry(args, attempts, backoffMs) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await execFileAsync("cargo", args, {
+        cwd,
+        maxBuffer: 1024 * 1024 * 64
+      });
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[snapshot:publish] snapshot generation attempt ${attempt}/${attempts} failed: ${message}`
+      );
+
+      const stderr =
+        error && typeof error === "object" && "stderr" in error
+          ? error.stderr
+          : null;
+      if (typeof stderr === "string" && stderr.trim()) {
+        process.stderr.write(stderr.endsWith("\n") ? stderr : `${stderr}\n`);
+      }
+
+      if (attempt < attempts) {
+        const waitMs = backoffMs * 2 ** (attempt - 1);
+        console.error(
+          `[snapshot:publish] retrying snapshot generation in ${waitMs}ms`
+        );
+        await sleep(waitMs);
+      }
+    }
+  }
+
+  throw new Error(
+    `[snapshot:publish] snapshot generation failed after ${attempts} attempts: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`
+  );
+}
+
 async function main() {
   const token = process.env.BLOB_READ_WRITE_TOKEN;
   if (!token) {
@@ -26,6 +82,10 @@ async function main() {
   const dashboardLimit = env("SNAPSHOT_DASHBOARD_LIMIT", "100");
   const minQueueMultiple = env("SNAPSHOT_MIN_QUEUE_MULTIPLE", "2");
   const minApr = env("SNAPSHOT_MIN_APR", "0");
+  const publishAttempts = envInteger("SNAPSHOT_PUBLISH_ATTEMPTS", 5, { min: 1 });
+  const publishBackoffMs = envInteger("SNAPSHOT_PUBLISH_BACKOFF_MS", 2000, {
+    min: 0
+  });
 
   const args = [
     "run",
@@ -45,10 +105,11 @@ async function main() {
     minApr
   ];
 
-  const { stdout, stderr } = await execFileAsync("cargo", args, {
-    cwd,
-    maxBuffer: 1024 * 1024 * 64
-  });
+  const { stdout, stderr } = await runSnapshotWithRetry(
+    args,
+    publishAttempts,
+    publishBackoffMs
+  );
 
   if (stderr) {
     process.stderr.write(stderr);
