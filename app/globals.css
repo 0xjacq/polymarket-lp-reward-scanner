@@ -522,6 +522,13 @@ a { color: inherit; }
   outline-offset: 1px;
 }
 
+.chart-range-tabs button:focus-visible,
+.market-link:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 /* =============== MARKET LIST & HEADER ROW =============== */
 
 .market-list {
@@ -1404,6 +1411,12 @@ a { color: inherit; }
   .market-open-link,
   .toggle-chip,
   .chart-range-tabs button {
+    min-height: 44px;
+  }
+  .ui-input,
+  .ui-select,
+  .control input,
+  .control select {
     min-height: 44px;
   }
   .market-actions {
