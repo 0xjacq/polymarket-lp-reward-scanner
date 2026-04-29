@@ -331,6 +331,15 @@ export async function fetchLiveBook(tokenId: string) {
   url.searchParams.set("token_id", tokenId);
 
   const response = await fetch(url, { cache: "no-store" });
+  if (response.status === 404) {
+    return {
+      bids: [],
+      asks: [],
+      tickSize: 0.01,
+      fetchedAt: new Date().toISOString()
+    };
+  }
+
   if (!response.ok) {
     throw new Error(`Live orderbook fetch failed with status ${response.status}`);
   }

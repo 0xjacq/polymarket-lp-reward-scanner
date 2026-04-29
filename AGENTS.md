@@ -24,14 +24,23 @@ https://polymarket-lp-reward-scanner.vercel.app/
 
 Do not validate visual/UI work on a local Next.js server. Local commands are for build/type/data debugging only.
 
-## Required Reading Before Work
+## Browser Use Guardrails
 
-Read these files before changing behavior:
-
-- `README.md`
-- `docs/vercel-snapshot.md`
-- `docs/ai-handoff.md`
-- `ROADMAP.md` for scoring-methodology gaps
+- Prefer `browser-use` for web QA and frontend verification; do not use desktop-wide automation unless explicitly requested by the user.
+- Default QA scope is this project URL only: `https://polymarket-lp-reward-scanner.vercel.app/`.
+- Localhost QA is allowed only for debugging behavior that cannot be validated on production; visual sign-off must still happen on the canonical production URL.
+- Allowed without extra confirmation:
+  - navigation within the allowed app pages
+  - reading page content, inspecting states, and taking screenshots
+  - non-destructive interactions such as filter/sort toggles, row expansion, and tab/interval switches
+- Ask for explicit user confirmation before:
+  - logging in or using saved credentials
+  - submitting any form or any irreversible action
+  - visiting a domain outside the project allowlist
+  - uploading files or downloading executables
+  - entering sensitive data (tokens, passwords, API keys, payment details, personal data)
+- If a browser session opens an unexpected site, account page, wallet prompt, extension prompt, or permission dialog, stop immediately and ask the user how to proceed.
+- In QA reports, include exact reproduction steps, observed result, expected result, and whether the issue reproduces on production.
 
 ## Development Workflow
 

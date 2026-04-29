@@ -129,6 +129,19 @@ function formatPrice(value: number | null) {
   return formatNumber(value, 3);
 }
 
+function formatAprRange(lower: number | null, upper: number | null, fallback = "-") {
+  if (lower === null && upper === null) {
+    return fallback;
+  }
+  if (lower !== null && upper !== null) {
+    return `${formatPercent(lower)} – ${formatPercent(upper)}`;
+  }
+  if (lower !== null) {
+    return `>= ${formatPercent(lower)}`;
+  }
+  return `<= ${formatPercent(upper)}`;
+}
+
 function formatOrderbookPrice(value: number | null) {
   if (value === null) {
     return "-";
@@ -152,10 +165,16 @@ function formatTimestamp(value: string | null) {
     return "-";
   }
 
-  return new Intl.DateTimeFormat("en-US", {
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    return "-";
+  }
+
+  return `${new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
-    timeStyle: "short"
-  }).format(new Date(value));
+    timeStyle: "short",
+    timeZone: "UTC"
+  }).format(timestamp)} UTC`;
 }
 
 function formatChartTime(time: Time) {
@@ -1113,11 +1132,7 @@ function LPDetailsPanel({
                     />
                     <MetricCell
                       label="APR range (low-high)"
-                      value={
-                        liveDetail.aprLower !== null || liveDetail.aprUpper !== null
-                          ? `${formatPercent(liveDetail.aprLower)} – ${formatPercent(liveDetail.aprUpper)}`
-                          : "-"
-                      }
+                      value={formatAprRange(liveDetail.aprLower, liveDetail.aprUpper)}
                     />
                     <MetricCell
                       label="Eff APR (2-sided)"
@@ -1248,11 +1263,7 @@ function ScannerRowCard({
           <MetricCell label="Time to start" value={timeToStart} />
           <MetricCell
             label="APR range (low-high)"
-            value={
-              row.aprLower !== null || row.aprUpper !== null
-                ? `${formatPercent(row.aprLower)} – ${formatPercent(row.aprUpper)}`
-                : formatPercent(displayedApr)
-            }
+            value={formatAprRange(row.aprLower, row.aprUpper, formatPercent(displayedApr))}
           />
         </div>
 
