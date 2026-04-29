@@ -19,6 +19,8 @@ jobs:
     env:
       BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
       SNAPSHOT_BLOB_PATH: scanner/latest.json
+      SNAPSHOT_PUBLISH_ATTEMPTS: 5
+      SNAPSHOT_PUBLISH_BACKOFF_MS: 2000
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
