@@ -1329,7 +1329,7 @@ export function LiveDashboard({
   });
 
   useEffect(() => {
-    setScannerSort("effectiveApr");
+    setScannerSort(showExtreme ? "twoSidedApr" : "effectiveApr");
     setExpandedKey(null);
     setDetailState({ key: null, loading: false, error: null, data: null });
   }, [showExtreme]);
@@ -1432,8 +1432,8 @@ export function LiveDashboard({
       }
 
       if (Number.isFinite(minAprValue)) {
-        const displayedApr = row.effectiveApr;
-        if ((displayedApr ?? Number.NEGATIVE_INFINITY) < minAprValue) {
+        const aprForThreshold = showExtreme ? row.twoSidedApr : row.effectiveApr;
+        if ((aprForThreshold ?? Number.NEGATIVE_INFINITY) < minAprValue) {
           return false;
         }
       }
