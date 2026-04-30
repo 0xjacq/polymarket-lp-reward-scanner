@@ -50,6 +50,8 @@ html, body {
   color: var(--text);
   font-family: var(--font-sans), "Manrope", "Inter", "Segoe UI", sans-serif;
   font-feature-settings: "ss01", "cv01";
+  width: 100%;
+  max-width: 100%;
 }
 
 body {
@@ -296,7 +298,8 @@ a { color: inherit; }
 /* =============== APP SHELL =============== */
 
 .app-shell {
-  width: min(100vw - 0px, 1840px);
+  width: 100%;
+  max-width: 1840px;
   margin: 0 auto;
   padding: 0 0 64px;
 }
@@ -307,12 +310,11 @@ a { color: inherit; }
   display: flex;
   align-items: center;
   gap: 16px;
+  flex-wrap: wrap;
   padding: 12px 24px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
-  position: sticky;
-  top: 0;
-  z-index: 50;
+  position: static;
 }
 
 .toolbar-copy {
@@ -406,9 +408,7 @@ a { color: inherit; }
 /* =============== FILTER BAR =============== */
 
 .filters-band {
-  position: sticky;
-  top: 51px;
-  z-index: 40;
+  position: static;
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
   padding: 10px 24px;
@@ -545,23 +545,20 @@ a { color: inherit; }
 .market-row-header {
   --row-columns:
     34px
-    minmax(320px, 2.3fr)
-    minmax(150px, 1fr)
-    112px
-    112px
-    96px
+    minmax(260px, 2.3fr)
+    minmax(132px, 1fr)
+    104px
+    104px
+    88px
+    78px
+    78px
+    82px
     84px
-    84px
-    90px
-    92px
-    122px
-    minmax(248px, 1.3fr);
+    112px
+    minmax(220px, 1.25fr);
   display: grid;
   grid-template-columns: var(--row-columns);
-  gap: 10px;
-  position: sticky;
-  top: 105px;
-  z-index: 30;
+  gap: 8px;
   padding: 8px 24px;
   background: var(--bg);
   border-bottom: 1px solid var(--border-strong);
@@ -579,21 +576,21 @@ a { color: inherit; }
 .market-row {
   --row-columns:
     34px
-    minmax(320px, 2.3fr)
-    minmax(150px, 1fr)
-    112px
-    112px
-    96px
+    minmax(260px, 2.3fr)
+    minmax(132px, 1fr)
+    104px
+    104px
+    88px
+    78px
+    78px
+    82px
     84px
-    84px
-    90px
-    92px
-    122px
-    minmax(248px, 1.3fr);
+    112px
+    minmax(220px, 1.25fr);
   display: grid;
   grid-template-columns: var(--row-columns);
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 10px 24px;
   border: none !important;
   border-bottom: 1px solid color-mix(in oklab, var(--border) 75%, var(--border-strong) 25%);
@@ -988,6 +985,7 @@ a { color: inherit; }
 .detail-card {
   display: grid;
   gap: 10px;
+  min-width: 0;
   padding: 14px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
@@ -1022,6 +1020,7 @@ a { color: inherit; }
 .chart-range-tabs {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--border-strong);
@@ -1273,55 +1272,124 @@ a { color: inherit; }
 
 /* =============== RESPONSIVE =============== */
 
-@media (max-width: 1280px) {
+@media (min-width: 1101px) {
+  .app-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+}
+
+@media (max-width: 1535px) {
   .market-row-header {
     display: none;
   }
 
   .market-row {
-    grid-template-columns:
-      28px
-      minmax(240px, 2fr)
-      minmax(100px, 1fr)
-      95px
-      95px
-      84px
-      76px
-      76px
-      92px
-      112px
-      minmax(220px, 1fr);
+    grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr);
     row-gap: 8px;
+    column-gap: 8px;
     padding: 12px 16px;
+    align-items: start;
   }
 
-  .market-cell { grid-column: 2; }
-  .tags-cell { grid-column: 3; }
-  .apr-one-cell { grid-column: 4; }
-  .apr-two-cell { grid-column: 5; }
-  .reward-cell { grid-column: 6; }
-  .queue-cell { grid-column: 7; }
-  .spread-cell { grid-column: 8; }
-  .price-cell { grid-column: 9; }
-  .time-cell { grid-column: 10; }
-  .actions-cell { grid-column: 11; min-width: 220px; }
-  .market-actions { min-width: 220px; }
-  .comp-cell { display: none; }
+  .market-cell { grid-column: 2 / -1; grid-row: 1; }
+  .tags-cell { grid-column: 2 / -1; grid-row: 2; }
+  .apr-one-cell { grid-column: 2; grid-row: 3; }
+  .apr-two-cell { grid-column: 3; grid-row: 3; }
+  .reward-cell { grid-column: 2; grid-row: 4; }
+  .time-cell { grid-column: 3; grid-row: 4; }
+  .actions-cell {
+    grid-column: 2 / -1;
+    grid-row: 5;
+    min-width: 0;
+    margin-top: 2px;
+  }
+  .queue-cell,
+  .spread-cell,
+  .comp-cell,
+  .price-cell {
+    display: none;
+  }
+
+  .metric-cell {
+    min-height: 58px;
+    align-items: flex-start;
+    justify-content: center;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--bg-2) 82%, var(--bg-3) 18%);
+  }
+
+  .metric-cell::before {
+    color: var(--dim);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .apr-one-cell::before { content: "APR 1-sided"; }
+  .apr-two-cell::before { content: "APR 2-sided"; }
+  .reward-cell::before { content: "Reward/day"; }
+  .time-cell::before { content: "Time"; }
+
+  .time-cell strong {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--muted-strong);
+  }
+
+  .market-actions {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
 
   .lp-panel {
     grid-column: 2 / -1;
   }
-
-  .detail-sections,
-  .detail-sections-compact,
-  .lp-panel-toolbar { grid-template-columns: 1fr; }
 
   .filters-band { padding: 10px 16px; }
   .app-toolbar { padding: 12px 16px; }
   .subtle { max-width: none; }
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1100px) {
+  .filter-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 12px;
+  }
+
+  .control {
+    display: grid;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .control-wide {
+    grid-column: 1 / -1;
+    max-width: none;
+  }
+
+  .lp-panel-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-sections {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .detail-sections-compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1100px) {
   .market-row {
     grid-template-columns: 28px minmax(0, 1fr);
     row-gap: 10px;
@@ -1355,6 +1423,7 @@ a { color: inherit; }
     display: none;
   }
 
+  .apr-one-cell::before { content: "APR"; }
   .metric-cell strong {
     font-size: 13px;
   }
@@ -1387,7 +1456,14 @@ a { color: inherit; }
   .apr-one-cell { grid-column: 2; grid-row: 3; }
   .time-cell { grid-column: 2; grid-row: 4; }
 
-  .filters-band { position: static; flex-direction: column; align-items: stretch; gap: 10px; }
+  .filters-band {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .filter-grid {
+    grid-template-columns: 1fr;
+  }
   .toggle-row { gap: 10px; }
   .toggle-group { flex-wrap: wrap; }
   .app-toolbar {
@@ -1452,6 +1528,23 @@ a { color: inherit; }
     font-size: 12px;
   }
   .price-chart-frame, .price-history-canvas { min-height: 240px; height: 240px; }
+  .detail-sections,
+  .detail-sections-compact {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .orderbook-spread-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    justify-items: start;
+    padding: 10px 14px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
