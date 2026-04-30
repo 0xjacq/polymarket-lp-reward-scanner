@@ -1,0 +1,31 @@
+name: Check Prod Snapshot Freshness
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-prod-snapshot-freshness
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify production snapshot freshness
+        env:
+          SNAPSHOT_FRESHNESS_URL: https://polymarket-lp-reward-scanner.vercel.app/api/scanner?limit=1
+        run: node scripts/check-prod-snapshot-freshness.mjs

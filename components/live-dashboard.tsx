@@ -312,9 +312,15 @@ function formatLiveTimeToStart(
     return fallback ?? "-";
   }
 
-  return formatDurationFromMs(
-    Math.max(0, new Date(eventStartTime).getTime() - nowMs)
-  );
+  const eventTime = new Date(eventStartTime).getTime();
+  if (!Number.isFinite(eventTime)) {
+    return fallback ?? "-";
+  }
+  if (eventTime <= nowMs) {
+    return "started";
+  }
+
+  return formatDurationFromMs(eventTime - nowMs);
 }
 
 function deriveTimingFromStart(
@@ -362,6 +368,33 @@ function toScannerRowViewModel(
     derivedTimeToStart: formatLiveTimeToStart(row.eventStartTime, row.timeToStartHuman, nowMs),
     row
   };
+}
+
+function hasAnyLiveDiagnostics(detail: OpportunityDetailPayload) {
+  const { liveAvailability } = detail;
+  return (
+    liveAvailability.hasBids ||
+    liveAvailability.hasAsks ||
+    liveAvailability.hasPriceHistory
+  );
+}
+
+function liveFallbackMessage(detail: OpportunityDetailPayload) {
+  const { liveAvailability } = detail;
+  if (liveAvailability.canRecomputeLiveMetrics) {
+    return null;
+  }
+
+  switch (liveAvailability.fallbackReason) {
+    case "missing_ask_side":
+      return "Live order book is missing asks; snapshot metrics are used for APR and status.";
+    case "missing_bid_side":
+      return "Live order book is missing bids; snapshot metrics are used for APR and status.";
+    case "missing_orderbook":
+    case "incomplete_live_inputs":
+    default:
+      return "Live order book is incomplete; snapshot metrics are used for APR and status.";
+  }
 }
 
 function FilterToggle({
@@ -483,10 +516,10 @@ function usePolymarketOrderbookStream(
         if (eventType === "book" && event.asset_id === tokenId) {
           const bids = readBookLevels(event, "bids");
           const asks = readBookLevels(event, "asks");
-          if (bids.length > 0) {
+          if (Array.isArray(event.bids)) {
             bidsRef.current = normalizeBookLevels(bids, "bids");
           }
-          if (asks.length > 0) {
+          if (Array.isArray(event.asks)) {
             asksRef.current = normalizeBookLevels(asks, "asks");
           }
           for (const level of [...bids, ...asks]) {
@@ -1010,11 +1043,17 @@ function LPDetailsPanel({
 }) {
   const streamed = usePolymarketOrderbookStream(row.tokenId, detail);
   const liveDetail = streamed.detail;
-  const missingLiveData =
-    liveDetail !== null &&
-    (liveDetail.reason === "missing_book_data" ||
-      ((liveDetail.depth.bids.length === 0 && liveDetail.depth.asks.length === 0) &&
-        liveDetail.priceHistory.length === 0));
+  const availability = liveDetail?.liveAvailability ?? null;
+  const hasLiveDiagnostics = liveDetail ? hasAnyLiveDiagnostics(liveDetail) : false;
+  const showOrderBook = availability
+    ? availability.hasBids || availability.hasAsks
+    : false;
+  const showPriceHistory = availability ? hasLiveDiagnostics : false;
+  const showSnapshotFallback = availability
+    ? !availability.canRecomputeLiveMetrics
+    : false;
+  const showNoLiveDiagnostics = availability ? !hasLiveDiagnostics : false;
+  const fallbackMessage = liveDetail ? liveFallbackMessage(liveDetail) : null;
   const liveStatusLabel =
     loading && !liveDetail ? "Refreshing live book..." : humanize(streamed.connectionState);
 
@@ -1058,168 +1097,184 @@ function LPDetailsPanel({
             was published {formatTimestamp(liveDetail.snapshotGeneratedAt)}.
           </p>
 
-          {missingLiveData ? (
+          {fallbackMessage && !showNoLiveDiagnostics ? (
             <p className="info-banner panel-banner" role="status">
-              Live order book and price history are temporarily unavailable for this
-              market. Snapshot metrics remain available below.
+              {fallbackMessage}
             </p>
-          ) : (
+          ) : null}
+
+          {showNoLiveDiagnostics ? (
+            <p className="detail-empty" role="status">
+              No live diagnostics available for this row.
+            </p>
+          ) : null}
+
+          {showPriceHistory ? (
+            <PriceHistoryChart
+              detail={liveDetail}
+              interval={priceHistoryInterval}
+              onIntervalChange={onPriceHistoryIntervalChange}
+              outcome={row.sideToTrade}
+            />
+          ) : null}
+
+          {showOrderBook ? (
+            <OrderBookVisualization
+              detail={liveDetail}
+              changedLevels={streamed.changedLevels}
+              connectionState={streamed.connectionState}
+              lastEventAt={streamed.lastEventAt}
+              updateCount={streamed.updateCount}
+            />
+          ) : null}
+
+          <div
+            className={
+              hasLiveDiagnostics
+                ? "detail-sections"
+                : "detail-sections detail-sections-compact"
+            }
+          >
             <>
-              <PriceHistoryChart
-                detail={liveDetail}
-                interval={priceHistoryInterval}
-                onIntervalChange={onPriceHistoryIntervalChange}
-                outcome={row.sideToTrade}
-              />
-              <OrderBookVisualization
-                detail={liveDetail}
-                changedLevels={streamed.changedLevels}
-                connectionState={streamed.connectionState}
-                lastEventAt={streamed.lastEventAt}
-                updateCount={streamed.updateCount}
-              />
-            </>
-          )}
-
-          <div className={missingLiveData ? "detail-sections detail-sections-compact" : "detail-sections"}>
-            <Card className="detail-card">
-              <h3>Reward rules</h3>
-              <div className="detail-grid">
-                <MetricCell
-                  label="Reward / day"
-                  value={formatMoney(row.rewardDailyRate)}
-                />
-                <MetricCell
-                  label="Max spread"
-                  value={`${formatNumber(liveDetail.rewardsMaxSpread, 2)}c`}
-                />
-                <MetricCell
-                  label="Min shares"
-                  value={formatShares(liveDetail.rewardsMinSize)}
-                />
-                <MetricCell
-                  label="Bid reward band"
-                  value={
-                    liveDetail.rewardBand.bidLower === null ||
-                    liveDetail.rewardBand.midpoint === null
-                      ? "-"
-                      : `${formatOrderbookPrice(
-                          liveDetail.rewardBand.bidLower
-                        )} to ${formatOrderbookPrice(liveDetail.rewardBand.midpoint)}`
-                  }
-                />
-                <MetricCell
-                  label="Ask reward band"
-                  value={
-                    liveDetail.rewardBand.midpoint === null ||
-                    liveDetail.rewardBand.askUpper === null
-                      ? "-"
-                      : `${formatOrderbookPrice(
-                          liveDetail.rewardBand.midpoint
-                        )} to ${formatOrderbookPrice(liveDetail.rewardBand.askUpper)}`
-                  }
-                />
-                <MetricCell
-                  label="Spread x"
-                  value={formatMultiple(liveDetail.spreadRatio)}
-                />
-              </div>
-            </Card>
-
-            {missingLiveData ? (
               <Card className="detail-card">
-                <h3>Snapshot fallback</h3>
+                <h3>Reward rules</h3>
                 <div className="detail-grid">
-                  <MetricCell label="Snapshot status" value={humanize(row.status)} />
-                  <MetricCell label="Snapshot reason" value={humanize(row.reason)} />
                   <MetricCell
-                    label="Eff APR (1-sided)"
-                    value={formatPercent(row.effectiveApr)}
+                    label="Reward / day"
+                    value={formatMoney(row.rewardDailyRate)}
                   />
                   <MetricCell
-                    label="Eff APR (2-sided)"
-                    value={formatPercent(row.twoSidedApr)}
+                    label="Max spread"
+                    value={`${formatNumber(liveDetail.rewardsMaxSpread, 2)}c`}
                   />
                   <MetricCell
-                    label="Suggested price"
-                    value={formatPrice(row.suggestedPrice)}
+                    label="Min shares"
+                    value={formatShares(liveDetail.rewardsMinSize)}
                   />
-                  <MetricCell label="Queue x" value={formatMultiple(row.queueMultiple)} />
+                  <MetricCell
+                    label="Bid reward band"
+                    value={
+                      liveDetail.rewardBand.bidLower === null ||
+                      liveDetail.rewardBand.midpoint === null
+                        ? "-"
+                        : `${formatOrderbookPrice(
+                            liveDetail.rewardBand.bidLower
+                          )} to ${formatOrderbookPrice(liveDetail.rewardBand.midpoint)}`
+                    }
+                  />
+                  <MetricCell
+                    label="Ask reward band"
+                    value={
+                      liveDetail.rewardBand.midpoint === null ||
+                      liveDetail.rewardBand.askUpper === null
+                        ? "-"
+                        : `${formatOrderbookPrice(
+                            liveDetail.rewardBand.midpoint
+                          )} to ${formatOrderbookPrice(liveDetail.rewardBand.askUpper)}`
+                    }
+                  />
+                  <MetricCell
+                    label="Spread x"
+                    value={formatMultiple(liveDetail.spreadRatio)}
+                  />
                 </div>
               </Card>
-            ) : (
-              <>
-                <Card className="detail-card">
-                  <h3>Your quote</h3>
-                  <div className="detail-grid">
-                    <MetricCell
-                      label="Suggested price"
-                      value={formatPrice(liveDetail.suggestedPrice)}
-                    />
-                    <MetricCell label="Your shares" value={formatShares(liveDetail.ownShares)} />
-                    <MetricCell
-                      label="Min qualifying quote"
-                      value={formatMoney(liveDetail.minimumQualifyingUsdc)}
-                    />
-                    <MetricCell
-                      label="Distance to ask"
-                      value={formatPrice(liveDetail.distanceToAsk)}
-                    />
-                    <MetricCell
-                      label="Queue ahead"
-                      value={formatShares(liveDetail.queueAheadShares)}
-                    />
-                    <MetricCell
-                      label="Queue ahead notional"
-                      value={formatMoney(liveDetail.queueAheadNotional)}
-                    />
-                    <MetricCell
-                      label="Queue x"
-                      value={formatMultiple(liveDetail.queueMultiple)}
-                    />
-                    <MetricCell
-                      label="Qualifying depth"
-                      value={formatShares(liveDetail.qualifyingDepthShares)}
-                    />
-                  </div>
-                </Card>
 
+              {showSnapshotFallback ? (
                 <Card className="detail-card">
-                  <h3>Estimated rewards</h3>
+                  <h3>Snapshot fallback</h3>
                   <div className="detail-grid">
-                    <MetricCell
-                      label="APR ceiling"
-                      value={formatPercent(liveDetail.aprCeiling)}
-                    />
-                    <MetricCell label="Raw APR" value={formatPercent(liveDetail.rawApr)} />
+                    <MetricCell label="Snapshot status" value={humanize(row.status)} />
+                    <MetricCell label="Snapshot reason" value={humanize(row.reason)} />
                     <MetricCell
                       label="Eff APR (1-sided)"
-                      value={formatPercent(liveDetail.effectiveApr)}
-                    />
-                    <MetricCell
-                      label="APR range (low-high)"
-                      value={formatAprRange(liveDetail.aprLower, liveDetail.aprUpper)}
+                      value={formatPercent(row.effectiveApr)}
                     />
                     <MetricCell
                       label="Eff APR (2-sided)"
-                      value={formatPercent(liveDetail.twoSidedApr)}
+                      value={formatPercent(row.twoSidedApr)}
                     />
                     <MetricCell
-                      label="Pricing zone"
-                      value={liveDetail.pricingZone ? humanize(liveDetail.pricingZone) : "-"}
+                      label="Suggested price"
+                      value={formatPrice(row.suggestedPrice)}
                     />
-                    <MetricCell
-                      label="Live status"
-                      value={humanize(liveDetail.status)}
-                    />
-                    <MetricCell
-                      label="Live reason"
-                      value={humanize(liveDetail.reason)}
-                    />
+                    <MetricCell label="Queue x" value={formatMultiple(row.queueMultiple)} />
                   </div>
                 </Card>
-              </>
-            )}
+              ) : (
+                <>
+                  <Card className="detail-card">
+                    <h3>Your quote</h3>
+                    <div className="detail-grid">
+                      <MetricCell
+                        label="Suggested price"
+                        value={formatPrice(liveDetail.suggestedPrice)}
+                      />
+                      <MetricCell label="Your shares" value={formatShares(liveDetail.ownShares)} />
+                      <MetricCell
+                        label="Min qualifying quote"
+                        value={formatMoney(liveDetail.minimumQualifyingUsdc)}
+                      />
+                      <MetricCell
+                        label="Distance to ask"
+                        value={formatPrice(liveDetail.distanceToAsk)}
+                      />
+                      <MetricCell
+                        label="Queue ahead"
+                        value={formatShares(liveDetail.queueAheadShares)}
+                      />
+                      <MetricCell
+                        label="Queue ahead notional"
+                        value={formatMoney(liveDetail.queueAheadNotional)}
+                      />
+                      <MetricCell
+                        label="Queue x"
+                        value={formatMultiple(liveDetail.queueMultiple)}
+                      />
+                      <MetricCell
+                        label="Qualifying depth"
+                        value={formatShares(liveDetail.qualifyingDepthShares)}
+                      />
+                    </div>
+                  </Card>
+
+                  <Card className="detail-card">
+                    <h3>Estimated rewards</h3>
+                    <div className="detail-grid">
+                      <MetricCell
+                        label="APR ceiling"
+                        value={formatPercent(liveDetail.aprCeiling)}
+                      />
+                      <MetricCell label="Raw APR" value={formatPercent(liveDetail.rawApr)} />
+                      <MetricCell
+                        label="Eff APR (1-sided)"
+                        value={formatPercent(liveDetail.effectiveApr)}
+                      />
+                      <MetricCell
+                        label="APR range (low-high)"
+                        value={formatAprRange(liveDetail.aprLower, liveDetail.aprUpper)}
+                      />
+                      <MetricCell
+                        label="Eff APR (2-sided)"
+                        value={formatPercent(liveDetail.twoSidedApr)}
+                      />
+                      <MetricCell
+                        label="Pricing zone"
+                        value={liveDetail.pricingZone ? humanize(liveDetail.pricingZone) : "-"}
+                      />
+                      <MetricCell
+                        label="Live status"
+                        value={humanize(liveDetail.status)}
+                      />
+                      <MetricCell
+                        label="Live reason"
+                        value={humanize(liveDetail.reason)}
+                      />
+                    </div>
+                  </Card>
+                </>
+              )}
+            </>
           </div>
         </>
       ) : loading ? (

@@ -2,6 +2,7 @@ import type {
   OpportunityDetailDepthLevel,
   OpportunityDetailPayload
 } from "@/lib/opportunity-detail";
+import { deriveLiveAvailability } from "@/lib/live-availability";
 
 const EPSILON = 1e-9;
 
@@ -119,6 +120,12 @@ export function deriveLiveDetail(
 ) {
   const normalizedBids = normalizeBookLevels(bids, "bids");
   const normalizedAsks = normalizeBookLevels(asks, "asks");
+  const liveAvailability = deriveLiveAvailability({
+    bids: normalizedBids,
+    asks: normalizedAsks,
+    priceHistory: detail.priceHistory,
+    rewardsMinSize: detail.rewardsMinSize
+  });
   const bestBid = normalizedBids[0]?.price ?? null;
   const bestAsk = normalizedAsks[0]?.price ?? null;
   const spread =
@@ -167,6 +174,7 @@ export function deriveLiveDetail(
   return {
     ...detail,
     fetchedAt,
+    liveAvailability,
     bestBid,
     bestAsk,
     spreadRatio:

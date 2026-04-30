@@ -1,5 +1,9 @@
 import type { OpportunityRow, SnapshotMeta } from "@/lib/snapshot";
 import {
+  deriveLiveAvailability,
+  type OpportunityLiveAvailability
+} from "@/lib/live-availability";
+import {
   buildAskDepth,
   buildBidDepth,
   type BookLevel
@@ -54,6 +58,7 @@ export type OpportunityDetailPayload = {
   fetchedAt: string;
   snapshotGeneratedAt: string;
   quoteSizeUsdc: number;
+  liveAvailability: OpportunityLiveAvailability;
   bestBid: number | null;
   bestAsk: number | null;
   adjustedMidpoint: number | null;
@@ -458,6 +463,12 @@ export function computeOpportunityDetail(input: {
   const bestBid = bids[0]?.price ?? null;
   const bestAsk = asks[0]?.price ?? null;
   const midpoint = adjustedMidpoint(bids, asks, row.rewardsMinSize);
+  const liveAvailability = deriveLiveAvailability({
+    bids,
+    asks,
+    priceHistory,
+    rewardsMinSize: row.rewardsMinSize
+  });
   const currentSpread =
     bestBid !== null && bestAsk !== null ? bestAsk - bestBid : null;
   const spreadRatio =
@@ -485,7 +496,7 @@ export function computeOpportunityDetail(input: {
   let suggestedPriceLower: number | null = null;
   let suggestedPriceUpper: number | null = null;
 
-  if (midpoint !== null && bestAsk !== null) {
+  if (liveAvailability.canRecomputeLiveMetrics && midpoint !== null && bestAsk !== null) {
     status = "skip";
     reason = "missing_book_data";
 
@@ -606,6 +617,7 @@ export function computeOpportunityDetail(input: {
     fetchedAt,
     snapshotGeneratedAt: meta.generatedAt,
     quoteSizeUsdc,
+    liveAvailability,
     bestBid,
     bestAsk,
     adjustedMidpoint: midpoint,
