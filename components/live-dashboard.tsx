@@ -23,6 +23,16 @@ import {
   WifiOff
 } from "lucide-react";
 
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger
+} from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import type {
   OpportunityDetailPayload,
   PriceHistoryInterval
@@ -40,11 +50,6 @@ import type {
   OpportunityRow,
   ScannerResponse
 } from "@/lib/snapshot";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 
 type Props = {
   initialScanner: ScannerResponse | null;
@@ -60,6 +65,8 @@ type ScannerSort =
   | "soonest"
   | "queueMultiple"
   | "spreadRatio";
+
+type InspectorTab = "execution" | "live";
 
 type DetailState = {
   key: string | null;
@@ -387,53 +394,18 @@ function liveFallbackMessage(detail: OpportunityDetailPayload) {
 
   switch (liveAvailability.fallbackReason) {
     case "missing_ask_side":
-      return "Live order book is missing asks; snapshot metrics are used for APR and status.";
+      return "Live asks are missing. Snapshot metrics stay in control for APR and qualification state.";
     case "missing_bid_side":
-      return "Live order book is missing bids; snapshot metrics are used for APR and status.";
+      return "Live bids are missing. Snapshot metrics stay in control for APR and qualification state.";
     case "missing_orderbook":
     case "incomplete_live_inputs":
     default:
-      return "Live order book is incomplete; snapshot metrics are used for APR and status.";
+      return "Live order book is incomplete. Snapshot metrics remain the source of truth.";
   }
 }
 
-function FilterToggle({
-  label,
-  value,
-  active,
-  onClick
-}: {
-  label: string;
-  value: string;
-  active: boolean;
-  onClick: (value: string) => void;
-}) {
-  return (
-    <Button
-      aria-pressed={active}
-      className={active ? "toggle-chip active" : "toggle-chip"}
-      onClick={() => onClick(value)}
-      type="button"
-      variant={active ? "secondary" : "ghost"}
-    >
-      {label}
-    </Button>
-  );
-}
-
-function MetricCell({
-  label,
-  value
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
+function formatSnapshotStatus(row: OpportunityRow) {
+  return `${humanize(row.status)} · ${humanize(row.reason)}`;
 }
 
 function readBookLevels(message: Record<string, unknown>, side: BookSide) {
@@ -652,6 +624,58 @@ function usePolymarketOrderbookStream(
   };
 }
 
+function MetricCell({
+  label,
+  value
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function KeyStat({
+  label,
+  value,
+  emphasis = false
+}: {
+  label: string;
+  value: string;
+  emphasis?: boolean;
+}) {
+  return (
+    <div className={emphasis ? "key-stat key-stat-emphasis" : "key-stat"}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function PanelSection({
+  title,
+  children,
+  description
+}: {
+  title: string;
+  children: React.ReactNode;
+  description?: string;
+}) {
+  return (
+    <Card className="detail-card">
+      <div className="detail-card-heading">
+        <h3>{title}</h3>
+        {description ? <p>{description}</p> : null}
+      </div>
+      {children}
+    </Card>
+  );
+}
+
 function PriceHistoryChart({
   detail,
   outcome,
@@ -725,7 +749,7 @@ function PriceHistoryChart({
 
     const chart = createChart(container, {
       autoSize: true,
-      height: 340,
+      height: 240,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
         textColor,
@@ -792,7 +816,7 @@ function PriceHistoryChart({
     rewardCeilingSeriesRef.current = rewardCeilingSeries;
 
     const resizeObserver = new ResizeObserver(() => {
-      chart.applyOptions({ height: container.clientWidth > 980 ? 340 : 280 });
+      chart.applyOptions({ height: container.clientWidth > 740 ? 240 : 220 });
       chart.timeScale().fitContent();
       window.requestAnimationFrame(updateRewardOverlay);
     });
@@ -854,7 +878,7 @@ function PriceHistoryChart({
         <div>
           <h3>
             <BarChart3 size={18} />
-            Market graph
+            Live market
           </h3>
           <p>
             {history.length > 0
@@ -938,19 +962,19 @@ function OrderBookVisualization({
         <div>
           <h3>
             <Radio size={18} />
-            Order Book
+            Order book
           </h3>
-          <p>Streaming public CLOB events. Rewarded prices are highlighted.</p>
+          <p>Public CLOB stream. Rewarded prices stay highlighted.</p>
         </div>
         <div className="book-summary">
           <Badge tone={connectionTone(connectionState)}>
             {connectionState === "live" ? <Wifi size={13} /> : <WifiOff size={13} />}
             {humanize(connectionState)}
           </Badge>
-          <span>Last: {formatOrderbookPrice(detail.priceHistory.at(-1)?.p ?? detail.bestBid)}</span>
-          <span>Spread: {formatOrderbookPrice(spread)}</span>
+          <span>Last {formatOrderbookPrice(detail.priceHistory.at(-1)?.p ?? detail.bestBid)}</span>
+          <span>Spread {formatOrderbookPrice(spread)}</span>
           <span>{updateCount} updates</span>
-          {lastEventAt ? <span>Last event {formatTimestamp(lastEventAt)}</span> : null}
+          {lastEventAt ? <span>{formatTimestamp(lastEventAt)}</span> : null}
         </div>
       </div>
 
@@ -986,8 +1010,8 @@ function OrderBookVisualization({
             </div>
           ))}
           <div className="orderbook-spread-row">
-            <span>Last: {formatOrderbookPrice(detail.priceHistory.at(-1)?.p ?? detail.bestBid)}</span>
-            <strong>Spread: {formatOrderbookPrice(spread)}</strong>
+            <span>Last {formatOrderbookPrice(detail.priceHistory.at(-1)?.p ?? detail.bestBid)}</span>
+            <strong>Spread {formatOrderbookPrice(spread)}</strong>
           </div>
           {bidRows.map((level) => (
             <div
@@ -1018,8 +1042,188 @@ function OrderBookVisualization({
   );
 }
 
-function LPDetailsPanel({
-  panelId,
+function ExecutionSnapshotFallback({ row }: { row: OpportunityRow }) {
+  return (
+    <PanelSection
+      title="Snapshot fallback"
+      description="Live depth is incomplete, so the snapshot ranking remains the execution reference."
+    >
+      <div className="detail-grid">
+        <MetricCell label="Snapshot status" value={humanize(row.status)} />
+        <MetricCell label="Snapshot reason" value={humanize(row.reason)} />
+        <MetricCell label="Eff APR (1-sided)" value={formatPercent(row.effectiveApr)} />
+        <MetricCell label="Eff APR (2-sided)" value={formatPercent(row.twoSidedApr)} />
+        <MetricCell label="Suggested price" value={formatPrice(row.suggestedPrice)} />
+        <MetricCell label="Queue x" value={formatMultiple(row.queueMultiple)} />
+      </div>
+    </PanelSection>
+  );
+}
+
+function ExecutionSections({
+  row,
+  liveDetail,
+  showSnapshotFallback
+}: {
+  row: OpportunityRow;
+  liveDetail: OpportunityDetailPayload;
+  showSnapshotFallback: boolean;
+}) {
+  return (
+    <div className="detail-sections">
+      <PanelSection title="Your quote" description="Execution economics first. Judge the queue before you move.">
+        <div className="detail-grid">
+          <MetricCell label="Suggested price" value={formatPrice(liveDetail.suggestedPrice)} />
+          <MetricCell label="Your shares" value={formatShares(liveDetail.ownShares)} />
+          <MetricCell
+            label="Min qualifying quote"
+            value={formatMoney(liveDetail.minimumQualifyingUsdc)}
+          />
+          <MetricCell label="Distance to ask" value={formatPrice(liveDetail.distanceToAsk)} />
+          <MetricCell label="Queue ahead" value={formatShares(liveDetail.queueAheadShares)} />
+          <MetricCell
+            label="Queue ahead notional"
+            value={formatMoney(liveDetail.queueAheadNotional)}
+          />
+          <MetricCell label="Queue x" value={formatMultiple(liveDetail.queueMultiple)} />
+          <MetricCell
+            label="Qualifying depth"
+            value={formatShares(liveDetail.qualifyingDepthShares)}
+          />
+        </div>
+      </PanelSection>
+
+      <PanelSection title="Reward rules" description="Reward bands and qualification limits from the live payload.">
+        <div className="detail-grid">
+          <MetricCell label="Reward / day" value={formatMoney(row.rewardDailyRate)} />
+          <MetricCell label="Max spread" value={`${formatNumber(liveDetail.rewardsMaxSpread, 2)}c`} />
+          <MetricCell label="Min shares" value={formatShares(liveDetail.rewardsMinSize)} />
+          <MetricCell
+            label="Bid reward band"
+            value={
+              liveDetail.rewardBand.bidLower === null ||
+              liveDetail.rewardBand.midpoint === null
+                ? "-"
+                : `${formatOrderbookPrice(
+                    liveDetail.rewardBand.bidLower
+                  )} to ${formatOrderbookPrice(liveDetail.rewardBand.midpoint)}`
+            }
+          />
+          <MetricCell
+            label="Ask reward band"
+            value={
+              liveDetail.rewardBand.midpoint === null ||
+              liveDetail.rewardBand.askUpper === null
+                ? "-"
+                : `${formatOrderbookPrice(
+                    liveDetail.rewardBand.midpoint
+                  )} to ${formatOrderbookPrice(liveDetail.rewardBand.askUpper)}`
+            }
+          />
+          <MetricCell label="Spread x" value={formatMultiple(liveDetail.spreadRatio)} />
+        </div>
+      </PanelSection>
+
+      {showSnapshotFallback ? (
+        <ExecutionSnapshotFallback row={row} />
+      ) : (
+        <PanelSection title="Estimated rewards" description="Live APR context after queue and depth are considered.">
+          <div className="detail-grid">
+            <MetricCell label="APR ceiling" value={formatPercent(liveDetail.aprCeiling)} />
+            <MetricCell label="Raw APR" value={formatPercent(liveDetail.rawApr)} />
+            <MetricCell label="Eff APR (1-sided)" value={formatPercent(liveDetail.effectiveApr)} />
+            <MetricCell
+              label="APR range (low-high)"
+              value={formatAprRange(liveDetail.aprLower, liveDetail.aprUpper)}
+            />
+            <MetricCell label="Eff APR (2-sided)" value={formatPercent(liveDetail.twoSidedApr)} />
+            <MetricCell
+              label="Pricing zone"
+              value={liveDetail.pricingZone ? humanize(liveDetail.pricingZone) : "-"}
+            />
+            <MetricCell label="Live status" value={humanize(liveDetail.status)} />
+            <MetricCell label="Live reason" value={humanize(liveDetail.reason)} />
+          </div>
+        </PanelSection>
+      )}
+    </div>
+  );
+}
+
+function SelectionPreviewPanel({
+  row,
+  onInspect,
+  staleMessage
+}: {
+  row: ScannerRowViewModel | null;
+  onInspect: (key: string) => void;
+  staleMessage: string | null;
+}) {
+  if (!row) {
+    return (
+      <section className="inspector-panel inspector-panel-empty">
+        <div className="inspector-empty-copy">
+          <p className="eyebrow">No opportunities</p>
+          <h2>Adjust the filters to bring rows back into focus.</h2>
+        </div>
+      </section>
+    );
+  }
+
+  const rowData = row.row;
+  return (
+    <section className="inspector-panel inspector-panel-preview">
+      <div className="inspector-header">
+        <div className="inspector-heading">
+          <p className="eyebrow">Selected opportunity</p>
+          <h2>{row.question}</h2>
+          <p className="inspector-subtitle">
+            {rowData.sideToTrade} · {formatSnapshotStatus(rowData)}
+          </p>
+        </div>
+        <div className="inspector-header-actions">
+          <Badge tone={row.derivedTiming === "started" ? "amber" : "green"}>
+            {humanize(row.derivedTiming)}
+          </Badge>
+          <Button
+            className="inspector-primary-action"
+            onClick={() => onInspect(row.key)}
+            type="button"
+            variant="secondary"
+          >
+            <Activity size={16} />
+            Inspect live diagnostics
+          </Button>
+        </div>
+      </div>
+
+      <div className="inspector-hero">
+        <KeyStat label="APR now" value={formatPercent(rowData.effectiveApr)} emphasis />
+        <KeyStat label="Reward / day" value={formatMoney(rowData.rewardDailyRate)} />
+        <KeyStat label="Time" value={row.derivedTimeToStart} />
+      </div>
+
+      <div className="preview-grid">
+        <MetricCell label="2-sided APR" value={formatPercent(rowData.twoSidedApr)} />
+        <MetricCell label="Suggested price" value={formatPrice(rowData.suggestedPrice)} />
+        <MetricCell label="Queue x" value={formatMultiple(rowData.queueMultiple)} />
+        <MetricCell label="Spread x" value={formatMultiple(rowData.spreadRatio)} />
+        <MetricCell label="Competitiveness" value={formatNumber(rowData.marketCompetitiveness, 3)} />
+        <MetricCell label="Tags" value={row.tags.slice(0, 3).join(" · ") || "-"} />
+      </div>
+
+      <div className="inspector-callout">
+        <p>
+          Preview stays snapshot-backed until you ask for live diagnostics. Use the
+          inspect action when the row looks worth validating.
+        </p>
+        {staleMessage ? <p>{staleMessage}</p> : null}
+      </div>
+    </section>
+  );
+}
+
+function ActiveInspectorPanel({
   row,
   detail,
   error,
@@ -1028,10 +1232,12 @@ function LPDetailsPanel({
   onQuoteSizeChange,
   defaultQuoteSize,
   priceHistoryInterval,
-  onPriceHistoryIntervalChange
+  onPriceHistoryIntervalChange,
+  activeTab,
+  onTabChange,
+  onClose
 }: {
-  panelId: string;
-  row: OpportunityRow;
+  row: ScannerRowViewModel;
   detail: OpportunityDetailPayload | null;
   error: string | null;
   loading: boolean;
@@ -1040,27 +1246,62 @@ function LPDetailsPanel({
   defaultQuoteSize: number;
   priceHistoryInterval: PriceHistoryInterval;
   onPriceHistoryIntervalChange: (interval: PriceHistoryInterval) => void;
+  activeTab: InspectorTab;
+  onTabChange: (tab: InspectorTab) => void;
+  onClose: () => void;
 }) {
   const streamed = usePolymarketOrderbookStream(row.tokenId, detail);
   const liveDetail = streamed.detail;
   const availability = liveDetail?.liveAvailability ?? null;
   const hasLiveDiagnostics = liveDetail ? hasAnyLiveDiagnostics(liveDetail) : false;
-  const showOrderBook = availability
-    ? availability.hasBids || availability.hasAsks
-    : false;
+  const showOrderBook = availability ? availability.hasBids || availability.hasAsks : false;
   const showPriceHistory = availability ? hasLiveDiagnostics : false;
-  const showSnapshotFallback = availability
-    ? !availability.canRecomputeLiveMetrics
-    : false;
+  const showSnapshotFallback = availability ? !availability.canRecomputeLiveMetrics : false;
   const showNoLiveDiagnostics = availability ? !hasLiveDiagnostics : false;
   const fallbackMessage = liveDetail ? liveFallbackMessage(liveDetail) : null;
   const liveStatusLabel =
     loading && !liveDetail ? "Refreshing live book..." : humanize(streamed.connectionState);
 
   return (
-    <section className="lp-panel" id={panelId}>
-      <div className="lp-panel-toolbar">
-        <label className="control lp-quote-control">
+    <section className="inspector-panel inspector-panel-active" id={`lp-details-${row.marketId}-${row.tokenId}`}>
+      <div className="inspector-header">
+        <div className="inspector-heading">
+          <p className="eyebrow">Live inspection</p>
+          <h2>{row.question}</h2>
+          <p className="inspector-subtitle">
+            {row.row.sideToTrade} · {formatSnapshotStatus(row.row)}
+          </p>
+        </div>
+        <div className="inspector-header-actions">
+          <Badge tone={connectionTone(streamed.connectionState)}>
+            <span className={`status-dot ${streamed.connectionState}`} />
+            {liveStatusLabel}
+          </Badge>
+          {row.row.marketUrl ? (
+            <a
+              className="market-open-link inspector-market-link"
+              href={row.row.marketUrl}
+              rel="noreferrer"
+              target="_blank"
+            >
+              <ExternalLink size={15} />
+              Open market
+            </a>
+          ) : null}
+          <Button onClick={onClose} type="button" variant="outline">
+            Close
+          </Button>
+        </div>
+      </div>
+
+      <div className="inspector-hero inspector-hero-live">
+        <KeyStat label="APR now" value={formatPercent(row.row.effectiveApr)} emphasis />
+        <KeyStat label="Reward / day" value={formatMoney(row.row.rewardDailyRate)} />
+        <KeyStat label="Time" value={row.derivedTimeToStart} />
+      </div>
+
+      <div className="inspector-toolbar">
+        <label className="control inspector-control">
           <span>Quote size (USDC)</span>
           <Input
             inputMode="decimal"
@@ -1069,18 +1310,19 @@ function LPDetailsPanel({
             placeholder={String(defaultQuoteSize)}
           />
         </label>
-
-        <div className="lp-panel-copy">
-          <span>Side</span>
-          <strong>{row.sideToTrade}</strong>
-        </div>
-
-        <div className="lp-panel-copy">
-          <span>Live status</span>
-          <strong>
-            <span className={`status-dot ${streamed.connectionState}`} />
-            {liveStatusLabel}
-          </strong>
+        <div className="inspector-meta-strip">
+          <div>
+            <span>Snapshot</span>
+            <strong>{humanize(row.row.status)}</strong>
+          </div>
+          <div>
+            <span>Reason</span>
+            <strong>{humanize(row.row.reason)}</strong>
+          </div>
+          <div>
+            <span>Live stream</span>
+            <strong>{liveStatusLabel}</strong>
+          </div>
         </div>
       </div>
 
@@ -1094,7 +1336,7 @@ function LPDetailsPanel({
         <>
           <p className="panel-note">
             Live book fetched {formatTimestamp(liveDetail.fetchedAt)}. Ranked snapshot
-            was published {formatTimestamp(liveDetail.snapshotGeneratedAt)}.
+            published {formatTimestamp(liveDetail.snapshotGeneratedAt)}.
           </p>
 
           {fallbackMessage && !showNoLiveDiagnostics ? (
@@ -1105,177 +1347,65 @@ function LPDetailsPanel({
 
           {showNoLiveDiagnostics ? (
             <p className="detail-empty" role="status">
-              No live diagnostics available for this row.
+              No live diagnostics are available for this row.
             </p>
           ) : null}
 
-          {showPriceHistory ? (
-            <PriceHistoryChart
-              detail={liveDetail}
-              interval={priceHistoryInterval}
-              onIntervalChange={onPriceHistoryIntervalChange}
-              outcome={row.sideToTrade}
-            />
-          ) : null}
+          <Tabs className="inspector-tabs">
+            <TabsList className="inspector-tabs-list">
+              <TabsTrigger
+                active={activeTab === "execution"}
+                aria-pressed={activeTab === "execution"}
+                onClick={() => onTabChange("execution")}
+              >
+                Execution
+              </TabsTrigger>
+              <TabsTrigger
+                active={activeTab === "live"}
+                aria-pressed={activeTab === "live"}
+                onClick={() => onTabChange("live")}
+              >
+                Live market
+              </TabsTrigger>
+            </TabsList>
 
-          {showOrderBook ? (
-            <OrderBookVisualization
-              detail={liveDetail}
-              changedLevels={streamed.changedLevels}
-              connectionState={streamed.connectionState}
-              lastEventAt={streamed.lastEventAt}
-              updateCount={streamed.updateCount}
-            />
-          ) : null}
+            {activeTab === "execution" ? (
+              <ExecutionSections
+                row={row.row}
+                liveDetail={liveDetail}
+                showSnapshotFallback={showSnapshotFallback}
+              />
+            ) : (
+              <div className="live-stack">
+                {showPriceHistory ? (
+                  <PriceHistoryChart
+                    detail={liveDetail}
+                    interval={priceHistoryInterval}
+                    onIntervalChange={onPriceHistoryIntervalChange}
+                    outcome={row.row.sideToTrade}
+                  />
+                ) : (
+                  <PanelSection title="Live market" description="No live price history was returned for this row.">
+                    <p className="detail-empty">No live price history was returned.</p>
+                  </PanelSection>
+                )}
 
-          <div
-            className={
-              hasLiveDiagnostics
-                ? "detail-sections"
-                : "detail-sections detail-sections-compact"
-            }
-          >
-            <>
-              <Card className="detail-card">
-                <h3>Reward rules</h3>
-                <div className="detail-grid">
-                  <MetricCell
-                    label="Reward / day"
-                    value={formatMoney(row.rewardDailyRate)}
+                {showOrderBook ? (
+                  <OrderBookVisualization
+                    detail={liveDetail}
+                    changedLevels={streamed.changedLevels}
+                    connectionState={streamed.connectionState}
+                    lastEventAt={streamed.lastEventAt}
+                    updateCount={streamed.updateCount}
                   />
-                  <MetricCell
-                    label="Max spread"
-                    value={`${formatNumber(liveDetail.rewardsMaxSpread, 2)}c`}
-                  />
-                  <MetricCell
-                    label="Min shares"
-                    value={formatShares(liveDetail.rewardsMinSize)}
-                  />
-                  <MetricCell
-                    label="Bid reward band"
-                    value={
-                      liveDetail.rewardBand.bidLower === null ||
-                      liveDetail.rewardBand.midpoint === null
-                        ? "-"
-                        : `${formatOrderbookPrice(
-                            liveDetail.rewardBand.bidLower
-                          )} to ${formatOrderbookPrice(liveDetail.rewardBand.midpoint)}`
-                    }
-                  />
-                  <MetricCell
-                    label="Ask reward band"
-                    value={
-                      liveDetail.rewardBand.midpoint === null ||
-                      liveDetail.rewardBand.askUpper === null
-                        ? "-"
-                        : `${formatOrderbookPrice(
-                            liveDetail.rewardBand.midpoint
-                          )} to ${formatOrderbookPrice(liveDetail.rewardBand.askUpper)}`
-                    }
-                  />
-                  <MetricCell
-                    label="Spread x"
-                    value={formatMultiple(liveDetail.spreadRatio)}
-                  />
-                </div>
-              </Card>
-
-              {showSnapshotFallback ? (
-                <Card className="detail-card">
-                  <h3>Snapshot fallback</h3>
-                  <div className="detail-grid">
-                    <MetricCell label="Snapshot status" value={humanize(row.status)} />
-                    <MetricCell label="Snapshot reason" value={humanize(row.reason)} />
-                    <MetricCell
-                      label="Eff APR (1-sided)"
-                      value={formatPercent(row.effectiveApr)}
-                    />
-                    <MetricCell
-                      label="Eff APR (2-sided)"
-                      value={formatPercent(row.twoSidedApr)}
-                    />
-                    <MetricCell
-                      label="Suggested price"
-                      value={formatPrice(row.suggestedPrice)}
-                    />
-                    <MetricCell label="Queue x" value={formatMultiple(row.queueMultiple)} />
-                  </div>
-                </Card>
-              ) : (
-                <>
-                  <Card className="detail-card">
-                    <h3>Your quote</h3>
-                    <div className="detail-grid">
-                      <MetricCell
-                        label="Suggested price"
-                        value={formatPrice(liveDetail.suggestedPrice)}
-                      />
-                      <MetricCell label="Your shares" value={formatShares(liveDetail.ownShares)} />
-                      <MetricCell
-                        label="Min qualifying quote"
-                        value={formatMoney(liveDetail.minimumQualifyingUsdc)}
-                      />
-                      <MetricCell
-                        label="Distance to ask"
-                        value={formatPrice(liveDetail.distanceToAsk)}
-                      />
-                      <MetricCell
-                        label="Queue ahead"
-                        value={formatShares(liveDetail.queueAheadShares)}
-                      />
-                      <MetricCell
-                        label="Queue ahead notional"
-                        value={formatMoney(liveDetail.queueAheadNotional)}
-                      />
-                      <MetricCell
-                        label="Queue x"
-                        value={formatMultiple(liveDetail.queueMultiple)}
-                      />
-                      <MetricCell
-                        label="Qualifying depth"
-                        value={formatShares(liveDetail.qualifyingDepthShares)}
-                      />
-                    </div>
-                  </Card>
-
-                  <Card className="detail-card">
-                    <h3>Estimated rewards</h3>
-                    <div className="detail-grid">
-                      <MetricCell
-                        label="APR ceiling"
-                        value={formatPercent(liveDetail.aprCeiling)}
-                      />
-                      <MetricCell label="Raw APR" value={formatPercent(liveDetail.rawApr)} />
-                      <MetricCell
-                        label="Eff APR (1-sided)"
-                        value={formatPercent(liveDetail.effectiveApr)}
-                      />
-                      <MetricCell
-                        label="APR range (low-high)"
-                        value={formatAprRange(liveDetail.aprLower, liveDetail.aprUpper)}
-                      />
-                      <MetricCell
-                        label="Eff APR (2-sided)"
-                        value={formatPercent(liveDetail.twoSidedApr)}
-                      />
-                      <MetricCell
-                        label="Pricing zone"
-                        value={liveDetail.pricingZone ? humanize(liveDetail.pricingZone) : "-"}
-                      />
-                      <MetricCell
-                        label="Live status"
-                        value={humanize(liveDetail.status)}
-                      />
-                      <MetricCell
-                        label="Live reason"
-                        value={humanize(liveDetail.reason)}
-                      />
-                    </div>
-                  </Card>
-                </>
-              )}
-            </>
-          </div>
+                ) : (
+                  <PanelSection title="Order book" description="The live stream did not return usable public depth.">
+                    <p className="detail-empty">No live orderbook depth was returned.</p>
+                  </PanelSection>
+                )}
+              </div>
+            )}
+          </Tabs>
         </>
       ) : loading ? (
         <p className="info-banner panel-banner" role="status" aria-live="polite">
@@ -1283,7 +1413,7 @@ function LPDetailsPanel({
         </p>
       ) : (
         <p className="detail-empty" role="status">
-          No live diagnostics available for this row.
+          No live diagnostics are available for this row.
         </p>
       )}
     </section>
@@ -1292,150 +1422,109 @@ function LPDetailsPanel({
 
 function ScannerRowCard({
   row,
-  displayedApr,
-  displayedTwoSidedApr,
-  expanded,
-  onToggle,
-  detail,
-  detailError,
-  detailLoading,
-  quoteSizeInput,
-  onQuoteSizeChange,
-  defaultQuoteSize,
-  priceHistoryInterval,
-  onPriceHistoryIntervalChange
+  rank,
+  selected,
+  inspecting,
+  onSelect,
+  onInspect
 }: {
   row: ScannerRowViewModel;
-  displayedApr: number | null;
-  displayedTwoSidedApr: number | null;
-  expanded: boolean;
-  onToggle: () => void;
-  detail: OpportunityDetailPayload | null;
-  detailError: string | null;
-  detailLoading: boolean;
-  quoteSizeInput: string;
-  onQuoteSizeChange: (value: string) => void;
-  defaultQuoteSize: number;
-  priceHistoryInterval: PriceHistoryInterval;
-  onPriceHistoryIntervalChange: (interval: PriceHistoryInterval) => void;
+  rank: number;
+  selected: boolean;
+  inspecting: boolean;
+  onSelect: () => void;
+  onInspect: () => void;
 }) {
   const rowData = row.row;
-  const question = rowData.marketUrl ? (
-    <a
-      className="market-link"
-      href={rowData.marketUrl}
-      rel="noreferrer"
-      target="_blank"
-    >
-      {row.question}
-    </a>
-  ) : (
-    row.question
-  );
-  const panelId = `lp-details-${row.marketId}-${row.tokenId}`;
 
   return (
-    <Card className="market-row">
-      <div className="market-cell">
-        <div className="heading-copy">
-          <div className="market-visual">
-            {rowData.image ? (
-              <img
-                src={rowData.image}
-                alt={`${row.question} market image`}
-                loading="lazy"
-              />
-            ) : (
-              <div className="image-fallback">{row.initial}</div>
-            )}
-          </div>
-          <div className="heading-text">
-            <h2>{question}</h2>
-            <p className="market-subhead">
-              {rowData.sideToTrade} · {humanize(rowData.status)} · {humanize(rowData.reason)}
-            </p>
+    <Card
+      className={[
+        "market-row",
+        selected ? "is-selected" : "",
+        inspecting ? "is-inspecting" : ""
+      ].join(" ")}
+    >
+      <button
+        className="market-row-main"
+        onClick={onSelect}
+        type="button"
+      >
+        <div className="rank-cell">
+          <span>{String(rank).padStart(2, "0")}</span>
+        </div>
+
+        <div className="market-row-info">
+          <div className="market-heading">
+            <div className="market-visual">
+              {rowData.image ? (
+                <img
+                  src={rowData.image}
+                  alt={`${row.question} market image`}
+                  loading="lazy"
+                />
+              ) : (
+                <div className="image-fallback">{row.initial}</div>
+              )}
+            </div>
+
+            <div className="heading-text">
+              <h3>{row.question}</h3>
+              <p className="market-subhead">
+                {rowData.sideToTrade} · {formatSnapshotStatus(rowData)}
+              </p>
+              <div className="tag-list">
+                {row.tags.slice(0, 2).map((tag) => (
+                  <Badge key={`${row.marketId}-${tag}`} tone="neutral">
+                    {tag}
+                  </Badge>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="tags-cell">
-        <div className="tag-list">
-          {row.tags.slice(0, 4).map((tag) => (
-            <Badge key={`${row.marketId}-${tag}`} tone="green">
-              {tag}
-            </Badge>
-          ))}
+        <div className="market-row-apr">
+          <span>APR now</span>
+          <strong>{formatPercent(rowData.effectiveApr)}</strong>
         </div>
-      </div>
 
-      <div className="metric-cell apr-one-cell">
-        <strong>{formatPercent(displayedApr)}</strong>
-      </div>
-      <div className="metric-cell apr-two-cell">
-        <strong>{formatPercent(displayedTwoSidedApr)}</strong>
-      </div>
-      <div className="metric-cell reward-cell">
-        <strong>{formatMoney(rowData.rewardDailyRate)}</strong>
-      </div>
-      <div className="metric-cell queue-cell">
-        <strong>{formatMultiple(rowData.queueMultiple)}</strong>
-      </div>
-      <div className="metric-cell spread-cell">
-        <strong>{formatMultiple(rowData.spreadRatio)}</strong>
-      </div>
-      <div className="metric-cell comp-cell">
-        <strong>{formatNumber(rowData.marketCompetitiveness, 3)}</strong>
-      </div>
-      <div className="metric-cell price-cell">
-        <strong>{formatPrice(rowData.suggestedPrice)}</strong>
-      </div>
-      <div className="metric-cell time-cell">
-        <strong>{row.derivedTimeToStart}</strong>
-        <span>{humanize(row.derivedTiming)}</span>
-      </div>
+        <div className="market-row-secondary">
+          <div>
+            <span>Reward / day</span>
+            <strong>{formatMoney(rowData.rewardDailyRate)}</strong>
+          </div>
+          <div>
+            <span>Time</span>
+            <strong>{row.derivedTimeToStart}</strong>
+          </div>
+        </div>
+      </button>
 
-      <div className="actions-cell">
-        <div className="market-actions">
-          <Button
-            aria-controls={panelId}
-            aria-expanded={expanded}
-            className={expanded ? "detail-button active" : "detail-button"}
-            onClick={onToggle}
-            type="button"
-            variant={expanded ? "secondary" : "default"}
+      <div className="market-actions">
+        <Button
+          aria-pressed={inspecting}
+          className={inspecting ? "detail-button active" : "detail-button"}
+          onClick={onInspect}
+          type="button"
+          variant={inspecting ? "secondary" : "default"}
+        >
+          <Activity size={16} />
+          {inspecting ? "Inspecting" : "Inspect live"}
+        </Button>
+        {rowData.marketUrl ? (
+          <a
+            aria-label={`Open ${row.question} on Polymarket`}
+            className="market-open-link"
+            href={rowData.marketUrl}
+            rel="noreferrer"
+            target="_blank"
           >
-            <Activity size={16} />
-            {expanded ? "Hide details" : "Details"}
-          </Button>
-          {rowData.marketUrl ? (
-            <a
-              aria-label="Open market on Polymarket"
-              className="market-open-link"
-              href={rowData.marketUrl}
-              rel="noreferrer"
-              target="_blank"
-            >
-              <ExternalLink size={15} />
-              Open market
-            </a>
-          ) : null}
-        </div>
+            <ExternalLink size={15} />
+            Open market
+          </a>
+        ) : null}
       </div>
-
-      {expanded ? (
-        <LPDetailsPanel
-          panelId={panelId}
-          row={rowData}
-          detail={detail}
-          error={detailError}
-          loading={detailLoading}
-          quoteSizeInput={quoteSizeInput}
-          onQuoteSizeChange={onQuoteSizeChange}
-          defaultQuoteSize={defaultQuoteSize}
-          priceHistoryInterval={priceHistoryInterval}
-          onPriceHistoryIntervalChange={onPriceHistoryIntervalChange}
-        />
-      ) : null}
     </Card>
   );
 }
@@ -1457,20 +1546,24 @@ export function LiveDashboard({
   const [showExtreme, setShowExtreme] = useState(false);
   const [scannerSort, setScannerSort] = useState<ScannerSort>("effectiveApr");
 
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [activeDetailKey, setActiveDetailKey] = useState<string | null>(null);
   const [quoteSizeInput, setQuoteSizeInput] = useState("");
   const [priceHistoryInterval, setPriceHistoryInterval] =
     useState<PriceHistoryInterval>("6h");
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("execution");
   const [detailState, setDetailState] = useState<DetailState>({
     key: null,
     loading: false,
     error: null,
     data: null
   });
+  const inspectorRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     setScannerSort(showExtreme ? "twoSidedApr" : "effectiveApr");
-    setExpandedKey(null);
+    setSelectedKey(null);
+    setActiveDetailKey(null);
     setDetailState({ key: null, loading: false, error: null, data: null });
   }, [showExtreme]);
 
@@ -1640,28 +1733,40 @@ export function LiveDashboard({
   ]);
 
   useEffect(() => {
-    if (
-      expandedKey &&
-      !filteredScannerRows.some((row) => rowKey(row) === expandedKey)
-    ) {
-      setExpandedKey(null);
-      setDetailState({ key: null, loading: false, error: null, data: null });
-    }
-  }, [expandedKey, filteredScannerRows]);
-
-  const expandedRow =
-    expandedKey === null
-      ? null
-      : filteredScannerRows.find((row) => rowKey(row) === expandedKey) ??
-        null;
-
-  useEffect(() => {
-    if (!expandedRow || !meta) {
+    if (filteredScannerRows.length === 0) {
+      setSelectedKey(null);
+      setActiveDetailKey(null);
       setDetailState({ key: null, loading: false, error: null, data: null });
       return;
     }
 
-    const requestKey = rowKey(expandedRow);
+    if (!selectedKey || !filteredScannerRows.some((row) => row.key === selectedKey)) {
+      setSelectedKey(filteredScannerRows[0].key);
+    }
+
+    if (activeDetailKey && !filteredScannerRows.some((row) => row.key === activeDetailKey)) {
+      setActiveDetailKey(null);
+      setDetailState({ key: null, loading: false, error: null, data: null });
+    }
+  }, [activeDetailKey, filteredScannerRows, selectedKey]);
+
+  const selectedRow =
+    selectedKey === null
+      ? filteredScannerRows[0] ?? null
+      : filteredScannerRows.find((row) => row.key === selectedKey) ?? filteredScannerRows[0] ?? null;
+
+  const activeDetailRow =
+    activeDetailKey === null
+      ? null
+      : filteredScannerRows.find((row) => row.key === activeDetailKey) ?? null;
+
+  useEffect(() => {
+    if (!activeDetailRow || !meta) {
+      setDetailState({ key: null, loading: false, error: null, data: null });
+      return;
+    }
+
+    const requestKey = rowKey(activeDetailRow);
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
@@ -1673,8 +1778,8 @@ export function LiveDashboard({
         }));
 
         const params = new URLSearchParams({
-          marketId: expandedRow.marketId,
-          tokenId: expandedRow.tokenId,
+          marketId: activeDetailRow.marketId,
+          tokenId: activeDetailRow.tokenId,
           quoteSizeUsdc: String(parsedQuoteSize),
           interval: priceHistoryInterval
         });
@@ -1716,24 +1821,56 @@ export function LiveDashboard({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [expandedRow, meta, parsedQuoteSize, priceHistoryInterval]);
+  }, [activeDetailRow, meta, parsedQuoteSize, priceHistoryInterval]);
+
+  useEffect(() => {
+    if (!activeDetailKey) {
+      return;
+    }
+    setInspectorTab("execution");
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!window.matchMedia("(max-width: 1279px)").matches) {
+      return;
+    }
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    inspectorRef.current?.scrollIntoView({
+      block: "start",
+      behavior: prefersReducedMotion ? "auto" : "smooth"
+    });
+  }, [activeDetailKey]);
 
   const staleMessage = meta?.warning
-    ? `Snapshot published ${formatTimestamp(meta.generatedAt)} (${formatDurationFromMs(
-        meta.snapshotAgeMs
-      )} old). Source: ${formatSnapshotSource(meta.snapshotSource)}. ${meta.warning}`
+    ? `Snapshot ${formatDurationFromMs(meta.snapshotAgeMs)} old · ${formatSnapshotSource(
+        meta.snapshotSource
+      )} · ${meta.warning}`
     : null;
+
+  const heroMeta = meta
+    ? `${formatTimestamp(meta.generatedAt)} · refreshes every 30s · publish cadence 5m`
+    : "Waiting for snapshot metadata";
 
   return (
     <main className="app-shell">
       <section className="app-toolbar">
         <div className="toolbar-copy">
-          <p className="eyebrow">Polymarket reward snapshot</p>
-          <h1>Opportunities</h1>
+          <p className="eyebrow">Polymarket reward scanner</p>
+          <h1>Opportunity console</h1>
           <p className="subtle">
-            Ranked from the latest Rust snapshot. The browser refreshes every 30
-            seconds; published data is on a five-minute cadence.
+            Snapshot ranking first, live validation second. Scan hard, open detail only
+            when the row earns it.
           </p>
+        </div>
+        <div className="toolbar-meta">
+          <div>
+            <span>Mode</span>
+            <strong>{showExtreme ? "Extreme pricing" : "Neutral pricing"}</strong>
+          </div>
+          <div>
+            <span>Snapshot</span>
+            <strong>{heroMeta}</strong>
+          </div>
         </div>
       </section>
 
@@ -1743,26 +1880,26 @@ export function LiveDashboard({
           role="status"
           aria-live="polite"
         >
+          <RefreshCw size={14} />
           {staleMessage}
         </p>
       ) : null}
 
       <section className="filters-band" aria-label="Scanner filters">
-        <div className="filter-grid">
+        <div className="filter-cluster">
+          <p>Search</p>
           <label className="control control-wide">
-            <span>Search</span>
             <div className="input-with-icon">
               <Search size={16} />
               <Input
-              value={scannerSearch}
-              onChange={(event) => setScannerSearch(event.target.value)}
-              placeholder="Question, side, status, reason, tag"
+                value={scannerSearch}
+                onChange={(event) => setScannerSearch(event.target.value)}
+                placeholder="Question, side, status, reason, tag"
               />
             </div>
           </label>
 
           <label className="control">
-            <span>Tag</span>
             <Select
               value={scannerTag}
               onChange={(event) => setScannerTag(event.target.value)}
@@ -1775,19 +1912,20 @@ export function LiveDashboard({
               ))}
             </Select>
           </label>
+        </div>
 
+        <div className="filter-cluster">
+          <p>Rank</p>
           <label className="control">
-            <span>Min APR</span>
             <Input
               inputMode="decimal"
               value={minApr}
               onChange={(event) => setMinApr(event.target.value)}
-              placeholder="0"
+              placeholder="Min APR"
             />
           </label>
 
           <label className="control">
-            <span>Sort</span>
             <Select
               value={scannerSort}
               onChange={(event) => setScannerSort(event.target.value as ScannerSort)}
@@ -1801,16 +1939,15 @@ export function LiveDashboard({
             </Select>
           </label>
 
-          <label className="control control-select">
-            <span>Rows</span>
+          <label className="control">
             <Select
               value={scannerRows}
               onChange={(event) => setScannerRows(Number(event.target.value))}
             >
-              <option value={20}>20</option>
-              <option value={40}>40</option>
-              <option value={80}>80</option>
-              <option value={120}>120</option>
+              <option value={20}>20 rows</option>
+              <option value={40}>40 rows</option>
+              <option value={80}>80 rows</option>
+              <option value={120}>120 rows</option>
             </Select>
           </label>
         </div>
@@ -1818,115 +1955,136 @@ export function LiveDashboard({
         <div className="toggle-row">
           <div className="toggle-group" role="group" aria-label="Timing filter">
             <span>Timing</span>
-            <FilterToggle
-              label="Upcoming"
-              value="upcoming"
-              active={scannerTiming === "upcoming"}
-              onClick={(value) => setScannerTiming(value as TimingFilter)}
-            />
-            <FilterToggle
-              label="Started"
-              value="started"
-              active={scannerTiming === "started"}
-              onClick={(value) => setScannerTiming(value as TimingFilter)}
-            />
-            <FilterToggle
-              label="All"
-              value="all"
-              active={scannerTiming === "all"}
-              onClick={(value) => setScannerTiming(value as TimingFilter)}
-            />
+            <Button
+              aria-pressed={scannerTiming === "upcoming"}
+              className={scannerTiming === "upcoming" ? "toggle-chip active" : "toggle-chip"}
+              onClick={() => setScannerTiming("upcoming")}
+              type="button"
+              variant={scannerTiming === "upcoming" ? "secondary" : "ghost"}
+            >
+              Upcoming
+            </Button>
+            <Button
+              aria-pressed={scannerTiming === "started"}
+              className={scannerTiming === "started" ? "toggle-chip active" : "toggle-chip"}
+              onClick={() => setScannerTiming("started")}
+              type="button"
+              variant={scannerTiming === "started" ? "secondary" : "ghost"}
+            >
+              Started
+            </Button>
+            <Button
+              aria-pressed={scannerTiming === "all"}
+              className={scannerTiming === "all" ? "toggle-chip active" : "toggle-chip"}
+              onClick={() => setScannerTiming("all")}
+              type="button"
+              variant={scannerTiming === "all" ? "secondary" : "ghost"}
+            >
+              All
+            </Button>
           </div>
 
           <div className="toggle-group" role="group" aria-label="Pricing zone filter">
             <span>Zone</span>
-            <FilterToggle
-              label="Neutral"
-              value="neutral"
-              active={!showExtreme}
+            <Button
+              aria-pressed={!showExtreme}
+              className={!showExtreme ? "toggle-chip active" : "toggle-chip"}
               onClick={() => setShowExtreme(false)}
-            />
-            <FilterToggle
-              label="Extreme"
-              value="extreme"
-              active={showExtreme}
+              type="button"
+              variant={!showExtreme ? "secondary" : "ghost"}
+            >
+              Neutral
+            </Button>
+            <Button
+              aria-pressed={showExtreme}
+              className={showExtreme ? "toggle-chip active" : "toggle-chip"}
               onClick={() => setShowExtreme(true)}
-            />
+              type="button"
+              variant={showExtreme ? "secondary" : "ghost"}
+            >
+              Extreme
+            </Button>
           </div>
         </div>
       </section>
 
       {error ? (
         <p className="error-banner" role="alert">
-          {hasAnyData ? `${error}. Last good snapshot remains on screen.` : error}
+          {hasAnyData ? `${error}. Last good snapshot remains in view.` : error}
         </p>
       ) : null}
 
-      <section
-        className="market-list"
-        aria-live="polite"
-        aria-busy={loading}
-        aria-label="Opportunity rows"
-      >
-        <div className="market-row-header" aria-hidden="true">
-          <div></div>
-          <div>Market</div>
-          <div>Tags</div>
-          <div>APR 1-sided</div>
-          <div>APR 2-sided</div>
-          <div>Reward/day</div>
-          <div>Queue x</div>
-          <div>Spread x</div>
-          <div>Comp</div>
-          <div>Price</div>
-          <div>Time</div>
-          <div>Actions</div>
-        </div>
-        {filteredScannerRows.map((viewRow) => {
-          const row = viewRow.row;
-          const key = viewRow.key;
-          const expanded = expandedKey === key;
-          return (
-            <ScannerRowCard
-              key={key}
-              row={viewRow}
-              displayedApr={row.effectiveApr}
-              displayedTwoSidedApr={row.twoSidedApr}
-              expanded={expanded}
-              onToggle={() => {
-                if (expanded) {
-                  setExpandedKey(null);
-                  setDetailState({
-                    key: null,
-                    loading: false,
-                    error: null,
-                    data: null
-                  });
-                  return;
-                }
+      <section className="dashboard-workspace">
+        <section
+          className="market-pane"
+          aria-live="polite"
+          aria-busy={loading}
+          aria-label="Opportunity rows"
+        >
+          <div className="market-pane-header">
+            <div>
+              <p className="eyebrow">Ranking rail</p>
+              <h2>APR leads, execution follows.</h2>
+            </div>
+            <p>
+              {filteredScannerRows.length} of {activeScannerViewRows.length} rows visible
+            </p>
+          </div>
 
-                setExpandedKey(key);
-                setQuoteSizeInput(String(defaultQuoteSize));
-              }}
-              detail={expanded ? detailState.data : null}
-              detailError={expanded ? detailState.error : null}
-              detailLoading={
-                expanded &&
-                detailState.key === key &&
-                detailState.loading
-              }
+          <div className="market-list">
+            {filteredScannerRows.map((viewRow, index) => (
+              <ScannerRowCard
+                key={viewRow.key}
+                row={viewRow}
+                rank={index + 1}
+                selected={selectedKey === viewRow.key}
+                inspecting={activeDetailKey === viewRow.key}
+                onSelect={() => setSelectedKey(viewRow.key)}
+                onInspect={() => {
+                  setSelectedKey(viewRow.key);
+                  setActiveDetailKey(viewRow.key);
+                  setQuoteSizeInput((current) => current || String(defaultQuoteSize));
+                }}
+              />
+            ))}
+
+            {!loading && !error && filteredScannerRows.length === 0 ? (
+              <p className="empty-state">No opportunity rows match the current filters.</p>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="inspector-pane" ref={inspectorRef}>
+          {selectedRow && activeDetailKey === selectedRow.key ? (
+            <ActiveInspectorPanel
+              row={selectedRow}
+              detail={detailState.data}
+              error={detailState.error}
+              loading={detailState.loading}
               quoteSizeInput={quoteSizeInput}
               onQuoteSizeChange={setQuoteSizeInput}
               defaultQuoteSize={defaultQuoteSize}
               priceHistoryInterval={priceHistoryInterval}
               onPriceHistoryIntervalChange={setPriceHistoryInterval}
+              activeTab={inspectorTab}
+              onTabChange={setInspectorTab}
+              onClose={() => {
+                setActiveDetailKey(null);
+                setDetailState({ key: null, loading: false, error: null, data: null });
+              }}
             />
-          );
-        })}
-
-        {!loading && !error && filteredScannerRows.length === 0 ? (
-          <p className="empty-state">No opportunity rows match the current filters.</p>
-        ) : null}
+          ) : (
+            <SelectionPreviewPanel
+              row={selectedRow}
+              onInspect={(key) => {
+                setSelectedKey(key);
+                setActiveDetailKey(key);
+                setQuoteSizeInput((current) => current || String(defaultQuoteSize));
+              }}
+              staleMessage={staleMessage}
+            />
+          )}
+        </section>
       </section>
     </main>
   );
