@@ -1,19 +1,5 @@
 # Agent Instructions
 
-This repository is designed to be easy for another AI agent to resume.
-
-## Tooling Rules
-
-- Always use Context7 MCP for library/framework documentation.
-- Always use Exa Search MCP for web searches.
-- Use LSP tools first for active code when available:
-  - `mcp__lsp_bridge__*` by default.
-  - `mcp__lsp_ruff__*` for Python if relevant.
-- Prefer symbol/definition/reference/diagnostic tools over guessing.
-- Use raw text search only for broad discovery or non-symbol text.
-
-Known local caveat: some Codex workspaces may not expose this project root to the LSP server. If LSP reports an allowed-roots error, state that and continue with static inspection.
-
 ## Production Canonical URL
 
 Use this URL for browser QA:
@@ -26,7 +12,7 @@ Do not validate visual/UI work on a local Next.js server. Local commands are for
 
 ## Browser Use Guardrails
 
-- Prefer `browser-use` for web QA and frontend verification; do not use desktop-wide automation unless explicitly requested by the user.
+- Prefer `browser use` for web QA and frontend verification; do not use desktop-wide automation unless explicitly requested by the user.
 - Default QA scope is this project URL only: `https://polymarket-lp-reward-scanner.vercel.app/`.
 - Localhost QA is allowed only for debugging behavior that cannot be validated on production; visual sign-off must still happen on the canonical production URL.
 - Allowed without extra confirmation:

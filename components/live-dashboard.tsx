@@ -68,6 +68,18 @@ type DetailState = {
   data: OpportunityDetailPayload | null;
 };
 
+type ScannerRowViewModel = {
+  key: string;
+  marketId: string;
+  tokenId: string;
+  question: string;
+  initial: string;
+  tags: string[];
+  derivedTiming: EventTiming;
+  derivedTimeToStart: string;
+  row: OpportunityRow;
+};
+
 type ConnectionState = "idle" | "connecting" | "live" | "reconnecting" | "stale";
 
 const REFRESH_MS = 30_000;
@@ -230,6 +242,13 @@ function humanize(value: string) {
     .join(" ");
 }
 
+function formatSnapshotSource(value: string) {
+  if (value === "public_url") {
+    return "Public URL";
+  }
+  return humanize(value);
+}
+
 function compareNullableDesc(left: number | null, right: number | null) {
   const leftValue = left ?? Number.NEGATIVE_INFINITY;
   const rightValue = right ?? Number.NEGATIVE_INFINITY;
@@ -259,7 +278,7 @@ function parsePositiveNumber(value: string) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function rowKey(row: OpportunityRow) {
+function rowKey(row: { marketId: string; tokenId: string }) {
   return `${row.marketId}:${row.tokenId}`;
 }
 
@@ -296,6 +315,53 @@ function formatLiveTimeToStart(
   return formatDurationFromMs(
     Math.max(0, new Date(eventStartTime).getTime() - nowMs)
   );
+}
+
+function deriveTimingFromStart(
+  row: OpportunityRow,
+  nowMs: number
+): EventTiming {
+  if (!row.eventStartTime) {
+    return row.eventTiming;
+  }
+
+  const eventTime = new Date(row.eventStartTime).getTime();
+  if (!Number.isFinite(eventTime)) {
+    return row.eventTiming;
+  }
+
+  return eventTime <= nowMs ? "started" : "upcoming";
+}
+
+function normalizeQuestion(row: OpportunityRow) {
+  const question = row.question.trim();
+  if (question.length > 0) {
+    return question;
+  }
+
+  const fallbackId =
+    row.marketId.trim().slice(0, 8) || row.tokenId.trim().slice(0, 8) || "unknown";
+  return `Untitled market (${fallbackId})`;
+}
+
+function toScannerRowViewModel(
+  row: OpportunityRow,
+  nowMs: number
+): ScannerRowViewModel {
+  const question = normalizeQuestion(row);
+  const firstCodePoint = Array.from(question)[0] ?? "?";
+
+  return {
+    key: rowKey(row),
+    marketId: row.marketId,
+    tokenId: row.tokenId,
+    question,
+    initial: firstCodePoint.toUpperCase(),
+    tags: row.tags,
+    derivedTiming: deriveTimingFromStart(row, nowMs),
+    derivedTimeToStart: formatLiveTimeToStart(row.eventStartTime, row.timeToStartHuman, nowMs),
+    row
+  };
 }
 
 function FilterToggle({
@@ -1173,7 +1239,6 @@ function ScannerRowCard({
   row,
   displayedApr,
   displayedTwoSidedApr,
-  timeToStart,
   expanded,
   onToggle,
   detail,
@@ -1185,10 +1250,9 @@ function ScannerRowCard({
   priceHistoryInterval,
   onPriceHistoryIntervalChange
 }: {
-  row: OpportunityRow;
+  row: ScannerRowViewModel;
   displayedApr: number | null;
   displayedTwoSidedApr: number | null;
-  timeToStart: string;
   expanded: boolean;
   onToggle: () => void;
   detail: OpportunityDetailPayload | null;
@@ -1200,10 +1264,11 @@ function ScannerRowCard({
   priceHistoryInterval: PriceHistoryInterval;
   onPriceHistoryIntervalChange: (interval: PriceHistoryInterval) => void;
 }) {
-  const question = row.marketUrl ? (
+  const rowData = row.row;
+  const question = rowData.marketUrl ? (
     <a
       className="market-link"
-      href={row.marketUrl}
+      href={rowData.marketUrl}
       rel="noreferrer"
       target="_blank"
     >
@@ -1216,57 +1281,65 @@ function ScannerRowCard({
 
   return (
     <Card className="market-row">
-      <div className="market-main">
-        <div className="market-heading">
-          <div className="heading-copy">
-            <div className="market-visual">
-              {row.image ? (
-                <img
-                  src={row.image}
-                  alt={`${row.question} market image`}
-                  loading="lazy"
-                />
-              ) : (
-                <div className="image-fallback">{row.question.slice(0, 1).toUpperCase()}</div>
-              )}
-            </div>
-            <div className="heading-text">
-              <h2>{question}</h2>
-              <p className="market-subhead">
-                {row.sideToTrade} · {humanize(row.status)} · {humanize(row.reason)}
-              </p>
-            </div>
+      <div className="market-cell">
+        <div className="heading-copy">
+          <div className="market-visual">
+            {rowData.image ? (
+              <img
+                src={rowData.image}
+                alt={`${row.question} market image`}
+                loading="lazy"
+              />
+            ) : (
+              <div className="image-fallback">{row.initial}</div>
+            )}
           </div>
-
-          <div className="tag-list">
-            {row.tags.slice(0, 4).map((tag) => (
-              <Badge key={`${row.marketId}-${tag}`} tone="green">
-                {tag}
-              </Badge>
-            ))}
+          <div className="heading-text">
+            <h2>{question}</h2>
+            <p className="market-subhead">
+              {rowData.sideToTrade} · {humanize(rowData.status)} · {humanize(rowData.reason)}
+            </p>
           </div>
         </div>
+      </div>
 
-        <div className="market-metrics scanner-metrics">
-          <MetricCell label="Eff APR (1-sided)" value={formatPercent(displayedApr)} />
-          <MetricCell label="Eff APR (2-sided)" value={formatPercent(displayedTwoSidedApr)} />
-          <MetricCell label="Reward / day" value={formatMoney(row.rewardDailyRate)} />
-          <MetricCell label="Queue x" value={formatMultiple(row.queueMultiple)} />
-          <MetricCell label="Spread x" value={formatMultiple(row.spreadRatio)} />
-          <MetricCell
-            label="Competitiveness"
-            value={formatNumber(row.marketCompetitiveness, 2)}
-          />
-          <MetricCell label="Event time" value={formatTimestamp(row.eventStartTime)} />
-          <MetricCell label="Timing" value={humanize(row.eventTiming)} />
-          <MetricCell label="Suggested price" value={formatPrice(row.suggestedPrice)} />
-          <MetricCell label="Time to start" value={timeToStart} />
-          <MetricCell
-            label="APR range (low-high)"
-            value={formatAprRange(row.aprLower, row.aprUpper, formatPercent(displayedApr))}
-          />
+      <div className="tags-cell">
+        <div className="tag-list">
+          {row.tags.slice(0, 4).map((tag) => (
+            <Badge key={`${row.marketId}-${tag}`} tone="green">
+              {tag}
+            </Badge>
+          ))}
         </div>
+      </div>
 
+      <div className="metric-cell apr-one-cell">
+        <strong>{formatPercent(displayedApr)}</strong>
+      </div>
+      <div className="metric-cell apr-two-cell">
+        <strong>{formatPercent(displayedTwoSidedApr)}</strong>
+      </div>
+      <div className="metric-cell reward-cell">
+        <strong>{formatMoney(rowData.rewardDailyRate)}</strong>
+      </div>
+      <div className="metric-cell queue-cell">
+        <strong>{formatMultiple(rowData.queueMultiple)}</strong>
+      </div>
+      <div className="metric-cell spread-cell">
+        <strong>{formatMultiple(rowData.spreadRatio)}</strong>
+      </div>
+      <div className="metric-cell comp-cell">
+        <strong>{formatNumber(rowData.marketCompetitiveness, 3)}</strong>
+      </div>
+      <div className="metric-cell price-cell">
+        <strong>{formatPrice(rowData.suggestedPrice)}</strong>
+      </div>
+      <div className="metric-cell time-cell">
+        <strong>{row.derivedTimeToStart}</strong>
+        <span>{humanize(row.derivedTiming)}</span>
+      </div>
+
+      <div className="actions-cell">
         <div className="market-actions">
           <Button
             aria-controls={panelId}
@@ -1277,36 +1350,37 @@ function ScannerRowCard({
             variant={expanded ? "secondary" : "default"}
           >
             <Activity size={16} />
-            {expanded ? "Hide LP details" : "LP details"}
+            {expanded ? "Hide details" : "Details"}
           </Button>
-          {row.marketUrl ? (
+          {rowData.marketUrl ? (
             <a
+              aria-label="Open market on Polymarket"
               className="market-open-link"
-              href={row.marketUrl}
+              href={rowData.marketUrl}
               rel="noreferrer"
               target="_blank"
             >
               <ExternalLink size={15} />
-              Open on Polymarket
+              Open market
             </a>
           ) : null}
         </div>
-
-        {expanded ? (
-          <LPDetailsPanel
-            panelId={panelId}
-            row={row}
-            detail={detail}
-            error={detailError}
-            loading={detailLoading}
-            quoteSizeInput={quoteSizeInput}
-            onQuoteSizeChange={onQuoteSizeChange}
-            defaultQuoteSize={defaultQuoteSize}
-            priceHistoryInterval={priceHistoryInterval}
-            onPriceHistoryIntervalChange={onPriceHistoryIntervalChange}
-          />
-        ) : null}
       </div>
+
+      {expanded ? (
+        <LPDetailsPanel
+          panelId={panelId}
+          row={rowData}
+          detail={detail}
+          error={detailError}
+          loading={detailLoading}
+          quoteSizeInput={quoteSizeInput}
+          onQuoteSizeChange={onQuoteSizeChange}
+          defaultQuoteSize={defaultQuoteSize}
+          priceHistoryInterval={priceHistoryInterval}
+          onPriceHistoryIntervalChange={onPriceHistoryIntervalChange}
+        />
+      ) : null}
     </Card>
   );
 }
@@ -1399,6 +1473,12 @@ export function LiveDashboard({
   const activeScannerRows = showExtreme
     ? scanner?.extreme.rows ?? []
     : scanner?.neutral.rows ?? [];
+  const referenceNowMs = countdownNowMs ?? Date.now();
+  const activeScannerViewRows = useMemo(
+    () =>
+      activeScannerRows.map((row) => toScannerRowViewModel(row, referenceNowMs)),
+    [activeScannerRows, referenceNowMs]
+  );
   const defaultQuoteSize = meta?.quoteSizeUsdc ?? 1000;
   const parsedQuoteSize = parsePositiveNumber(quoteSizeInput) ?? defaultQuoteSize;
   const isStale = meta?.snapshotHealth === "stale";
@@ -1407,10 +1487,10 @@ export function LiveDashboard({
     (scanner?.extreme.rows.length ?? 0) > 0;
   const visibleTags = useMemo(
     () =>
-      Array.from(new Set(activeScannerRows.flatMap((row) => row.tags))).sort((left, right) =>
+      Array.from(new Set(activeScannerViewRows.flatMap((row) => row.tags))).sort((left, right) =>
         left.localeCompare(right)
       ),
-    [activeScannerRows]
+    [activeScannerViewRows]
   );
 
   useEffect(() => {
@@ -1423,8 +1503,9 @@ export function LiveDashboard({
     const query = scannerSearch.trim().toLowerCase();
     const minAprValue = Number.parseFloat(minApr);
 
-    const rows = activeScannerRows.filter((row) => {
-      if (!matchesTiming(row.eventTiming, scannerTiming)) {
+    const rows = activeScannerViewRows.filter((viewRow) => {
+      const row = viewRow.row;
+      if (!matchesTiming(viewRow.derivedTiming, scannerTiming)) {
         return false;
       }
       if (scannerTag && !row.tags.includes(scannerTag)) {
@@ -1432,7 +1513,7 @@ export function LiveDashboard({
       }
       if (
         !matchesSearch(query, [
-          row.question.toLowerCase(),
+          viewRow.question.toLowerCase(),
           row.sideToTrade.toLowerCase(),
           row.status.toLowerCase(),
           row.reason.toLowerCase(),
@@ -1453,45 +1534,47 @@ export function LiveDashboard({
     });
 
     rows.sort((left, right) => {
+      const leftRow = left.row;
+      const rightRow = right.row;
       switch (scannerSort) {
         case "twoSidedApr":
           return (
-            compareNullableDesc(left.twoSidedApr, right.twoSidedApr) ||
-            compareNullableDesc(left.effectiveApr, right.effectiveApr) ||
-            right.rewardDailyRate - left.rewardDailyRate
+            compareNullableDesc(leftRow.twoSidedApr, rightRow.twoSidedApr) ||
+            compareNullableDesc(leftRow.effectiveApr, rightRow.effectiveApr) ||
+            rightRow.rewardDailyRate - leftRow.rewardDailyRate
           );
         case "rawApr":
           return (
-            compareNullableDesc(left.rawApr, right.rawApr) ||
-            compareNullableDesc(left.effectiveApr, right.effectiveApr) ||
-            right.rewardDailyRate - left.rewardDailyRate
+            compareNullableDesc(leftRow.rawApr, rightRow.rawApr) ||
+            compareNullableDesc(leftRow.effectiveApr, rightRow.effectiveApr) ||
+            rightRow.rewardDailyRate - leftRow.rewardDailyRate
           );
         case "rewardDailyRate":
-          return right.rewardDailyRate - left.rewardDailyRate;
+          return rightRow.rewardDailyRate - leftRow.rewardDailyRate;
         case "soonest":
           return (
             compareNullableAsc(
-              left.eventStartTime ? new Date(left.eventStartTime).getTime() : null,
-              right.eventStartTime ? new Date(right.eventStartTime).getTime() : null
-            ) || compareNullableDesc(left.effectiveApr, right.effectiveApr)
+              leftRow.eventStartTime ? new Date(leftRow.eventStartTime).getTime() : null,
+              rightRow.eventStartTime ? new Date(rightRow.eventStartTime).getTime() : null
+            ) || compareNullableDesc(leftRow.effectiveApr, rightRow.effectiveApr)
           );
         case "queueMultiple":
-          return compareNullableDesc(left.queueMultiple, right.queueMultiple);
+          return compareNullableDesc(leftRow.queueMultiple, rightRow.queueMultiple);
         case "spreadRatio":
-          return compareNullableAsc(left.spreadRatio, right.spreadRatio);
+          return compareNullableAsc(leftRow.spreadRatio, rightRow.spreadRatio);
         case "effectiveApr":
         default:
           return (
-            compareNullableDesc(left.effectiveApr, right.effectiveApr) ||
-            compareNullableDesc(left.twoSidedApr, right.twoSidedApr) ||
-            right.rewardDailyRate - left.rewardDailyRate
+            compareNullableDesc(leftRow.effectiveApr, rightRow.effectiveApr) ||
+            compareNullableDesc(leftRow.twoSidedApr, rightRow.twoSidedApr) ||
+            rightRow.rewardDailyRate - leftRow.rewardDailyRate
           );
       }
     });
 
     return rows.slice(0, scannerRows);
   }, [
-    activeScannerRows,
+    activeScannerViewRows,
     minApr,
     scannerRows,
     scannerSearch,
@@ -1583,7 +1666,7 @@ export function LiveDashboard({
   const staleMessage = meta?.warning
     ? `Snapshot published ${formatTimestamp(meta.generatedAt)} (${formatDurationFromMs(
         meta.snapshotAgeMs
-      )} old). Source: ${humanize(meta.snapshotSource)}. ${meta.warning}`
+      )} old). Source: ${formatSnapshotSource(meta.snapshotSource)}. ${meta.warning}`
     : null;
 
   return (
@@ -1742,22 +1825,18 @@ export function LiveDashboard({
           <div>Comp</div>
           <div>Price</div>
           <div>Time</div>
-          <div></div>
+          <div>Actions</div>
         </div>
-        {filteredScannerRows.map((row) => {
-          const key = rowKey(row);
+        {filteredScannerRows.map((viewRow) => {
+          const row = viewRow.row;
+          const key = viewRow.key;
           const expanded = expandedKey === key;
           return (
             <ScannerRowCard
               key={key}
-              row={row}
+              row={viewRow}
               displayedApr={row.effectiveApr}
               displayedTwoSidedApr={row.twoSidedApr}
-              timeToStart={formatLiveTimeToStart(
-                row.eventStartTime,
-                row.timeToStartHuman,
-                countdownNowMs
-              )}
               expanded={expanded}
               onToggle={() => {
                 if (expanded) {
