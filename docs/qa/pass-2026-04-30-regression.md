@@ -1,5 +1,7 @@
 # QA Regression Sweep (Production)
 
+Historical note: this sweep used a manual `vercel deploy --prod --yes` flow. The current canonical release path is push/merge to `main` with GitHub -> Vercel integration.
+
 - Date (UTC): 2026-04-30
 - Sweep start (UTC): 2026-04-30T03:41:35Z
 - Canonical URL: https://polymarket-lp-reward-scanner.vercel.app/

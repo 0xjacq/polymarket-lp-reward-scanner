@@ -55,7 +55,7 @@ Optional tuning:
 
 ## GitHub Actions Setup
 
-Add the workflow at the git repo root in `.github/workflows/publish-snapshot.yml`.
+The snapshot publish workflow lives at `.github/workflows/publish-snapshot.yml`.
 
 It runs on:
 
@@ -99,10 +99,12 @@ npm run snapshot:publish
 For UI changes:
 
 1. Run `npm run build` locally for compile/type validation.
-2. Deploy the app with Vercel.
-3. Open `https://polymarket-lp-reward-scanner.vercel.app/` in the browser and test there.
+2. Push or merge to `main` to trigger the GitHub -> Vercel production deployment.
+3. Wait for the canonical production deployment to be ready.
+4. Open `https://polymarket-lp-reward-scanner.vercel.app/` in the browser and test there.
 
 Do not use `npm run dev`, `npm run dev:mock-snapshot`, or `SNAPSHOT_LOCAL_PATH=... npm run dev` as the browser QA path. Those are only debugging tools for isolated snapshot issues.
+Do not use manual `vercel deploy` for normal releases; reserve it for explicit emergency recovery.
 
 Before committing deployment or snapshot changes, verify that `.env*`, `.vercel/`, `.next/`, `node_modules/`, and `target/` are not staged.
 

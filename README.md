@@ -39,7 +39,7 @@ Production is snapshot-backed. The app does not run the full Rust scanner on eve
 - Node.js 22+
 - npm
 - Rust stable
-- Vercel CLI only for deployment operations
+- Vercel project linked to GitHub for production deployments
 
 ## Commands
 
@@ -96,10 +96,12 @@ https://polymarket-lp-reward-scanner.vercel.app/
 For UI changes:
 
 1. Run `npm run build`.
-2. Deploy to the linked Vercel project.
-3. Test only the canonical Vercel URL in the browser.
+2. Push or merge the change to `main` to trigger the GitHub -> Vercel production deployment.
+3. Wait for the production deployment to be ready.
+4. Test only the canonical Vercel URL in the browser.
 
 Do not use `localhost` as the final visual QA target.
+Do not use manual `vercel deploy` for normal releases; reserve it for explicit emergency recovery.
 
 ## Security
 

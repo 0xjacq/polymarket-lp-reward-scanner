@@ -59,10 +59,12 @@ If that CLI option changes or fails, inspect `src/bin/snapshot.rs` and use the s
 For UI changes:
 
 1. Run `npm run build`.
-2. Deploy with Vercel.
-3. Test only `https://polymarket-lp-reward-scanner.vercel.app/`.
+2. Push or merge to `main` to trigger the GitHub -> Vercel production deployment.
+3. Wait for the canonical production deployment to be ready.
+4. Test only `https://polymarket-lp-reward-scanner.vercel.app/`.
 
 Do not use localhost as final browser QA.
+Do not use manual `vercel deploy` for normal releases unless an explicit emergency recovery is required.
 
 ## Secrets and Environment
 

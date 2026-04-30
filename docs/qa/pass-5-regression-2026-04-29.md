@@ -1,5 +1,7 @@
 # Pass 5 QA Regression Sweep (Production)
 
+Historical note: this sweep used a manual `vercel deploy --prod --yes` flow. The current canonical release path is push/merge to `main` with GitHub -> Vercel integration.
+
 - Date: 2026-04-29
 - URL: https://polymarket-lp-reward-scanner.vercel.app/
 - Branch: `codex/qa-e2e-5passes`
